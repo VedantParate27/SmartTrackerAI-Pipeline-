@@ -1,0 +1,9 @@
+General Customer Service Policy
+
+All complaints must be acknowledged within 24 hours of submission. High urgency complaints (as flagged by the triage system) must receive a substantive response within 4 business hours.
+
+Agents are not authorized to promise refunds, compensation, or account credits beyond what is explicitly stated in the relevant department policy documents. Any exception requires supervisor approval.
+
+Escalation path: if a customer's issue spans multiple departments (e.g., billing and technical support), the primary department is determined by the entity most central to the customer's core complaint, with a note left for the secondary department.
+
+Customer tone: agents should remain professional and empathetic regardless of the customer's tone, and should never argue with a frustrated customer, even if the customer is factually incorrect about policy details.
