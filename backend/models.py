@@ -128,3 +128,17 @@ class Complaint(Base):
             f"<Complaint id={self.id} tracking_id={self.tracking_id!r} "
             f"status={self.status!r} priority={self.priority!r}>"
         )
+class AppStateSnapshot(Base):
+    __tablename__ = "app_state_snapshots"
+    id = Column(Integer, primary_key=True, default=1)
+    payload = Column(Text, nullable=False)
+    revision = Column(Integer, nullable=False, default=1)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+
+    def __repr__(self):
+        return f"<AppStateSnapshot revision={self.revision}>"

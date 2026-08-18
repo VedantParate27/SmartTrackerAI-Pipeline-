@@ -18,15 +18,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 # Our own modules
 from database import get_db
 from models import Complaint, User
+from routers.auth import ALGORITHM, SECRET_KEY
 from schemas import ComplaintResponse, CreateComplaintRequest
-
-# ---------------------------------------------------------------------------
-# JWT SETTINGS  (must match the values in routers/auth.py exactly)
-# ---------------------------------------------------------------------------
-# In a real project you would import these from a shared config module, but
-# for clarity we keep them here so this file is easy to read on its own.
-SECRET_KEY = "change-me-before-going-to-production-use-a-long-random-string"
-ALGORITHM = "HS256"
 
 # ---------------------------------------------------------------------------
 # OAuth2 PASSWORD BEARER

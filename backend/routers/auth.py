@@ -4,6 +4,7 @@
 #   POST /auth/register  — create a new user account
 #   POST /auth/login     — verify credentials and return a signed JWT
 
+import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -30,7 +31,10 @@ from schemas import LoginRequest, RegisterRequest, RegisterResponse, TokenRespon
 #
 # To generate a strong key yourself:
 #   python -c "import secrets; print(secrets.token_hex(32))"
-SECRET_KEY = "change-me-before-going-to-production-use-a-long-random-string"
+SECRET_KEY = os.getenv(
+    "SMARTTRACKER_SECRET_KEY",
+    "development-only-change-me-before-production",
+)
 
 # The algorithm that signs the token. HS256 (HMAC + SHA-256) is the standard
 # choice for single-server apps — it's fast, well-supported, and secure.

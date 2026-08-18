@@ -47,14 +47,14 @@ function AdminLayout() {
             onClick={() => {
               if (
                 window.confirm(
-                  'Reset the demo back to the seeded cases and policies? Cases you submitted in this browser will be removed.',
+                  'Reset the shared workspace back to the seeded cases and policies? Submitted cases will be removed from the backend snapshot.',
                 )
               ) {
                 resetStore()
               }
             }}
           >
-            Reset demo data
+            Reset workspace
           </button>
         </div>
       </div>

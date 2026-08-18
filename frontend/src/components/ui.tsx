@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { API_BASE_URL } from '#/lib/api'
+import { useAppState } from '#/lib/store'
 import { STATUS_TONE } from '#/lib/taxonomy'
 import type { Tone } from '#/lib/taxonomy'
 import { percent } from '#/lib/format'
@@ -175,12 +177,25 @@ export function EmptyState({ children }: { children: ReactNode }) {
 }
 
 export function DemoNotice() {
+  const { syncStatus, syncMessage, backendRevision } = useAppState()
+  const tone =
+    syncStatus === 'online' ? 'ok' : syncStatus === 'offline' ? 'warn' : 'info'
+  const title =
+    syncStatus === 'online'
+      ? 'Backend connected'
+      : syncStatus === 'offline'
+        ? 'Offline fallback active'
+        : 'Connecting to backend'
+
   return (
-    <Callout tone="info" title="Demo build — frontend only">
-      No FastAPI backend, model provider or vector store is connected. The
-      classification, hybrid retrieval and draft generation shown here are
-      simulated locally from the seeded policy set so the SRS workflow can be
-      reviewed end to end.
+    <Callout tone={tone} title={title}>
+      {syncMessage}{' '}
+      <span className="subtle">
+        API: <span className="mono">{API_BASE_URL}</span>
+        {backendRevision > 0 ? ` · revision ${backendRevision}` : ''}. AI
+        analysis remains the deterministic prototype pipeline until a model
+        provider and vector index are configured.
+      </span>
     </Callout>
   )
 }

@@ -2,6 +2,9 @@
 # This file sets up the database connection for SmartTracker AI.
 # It uses SQLite (a lightweight file-based database) with SQLAlchemy (an ORM toolkit).
 
+import os
+from pathlib import Path
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -12,11 +15,14 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 # This file will be created automatically in the same folder as this script
 # when the app runs for the first time.
 #
-# The URL format for SQLite is:  sqlite:///./filename.db
-#   - "sqlite:///"  → tells SQLAlchemy to use the SQLite driver
-#   - "./"          → means "current directory" (relative path)
-#   - "smarttracker.db" → the name of the database file
-DATABASE_URL = "sqlite:///./smarttracker.db"
+# The default absolute path keeps the same database when Uvicorn is launched
+# from either the repository root or backend/. Tests and deployments can
+# override it with SMARTTRACKER_DATABASE_URL.
+DEFAULT_DATABASE_PATH = Path(__file__).resolve().with_name("smarttracker.db")
+DATABASE_URL = os.getenv(
+    "SMARTTRACKER_DATABASE_URL",
+    f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}",
+)
 
 # ---------------------------------------------------------------------------
 # 2. ENGINE
@@ -28,10 +34,11 @@ DATABASE_URL = "sqlite:///./smarttracker.db"
 #   → This is required ONLY for SQLite.
 #   → By default, SQLite only allows one thread to use a connection at a time.
 #   → FastAPI can use multiple threads, so we disable that restriction here.
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False}
-)
+engine_options = {}
+if DATABASE_URL.startswith("sqlite"):
+    engine_options["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, **engine_options)
 
 # ---------------------------------------------------------------------------
 # 3. SESSION FACTORY
