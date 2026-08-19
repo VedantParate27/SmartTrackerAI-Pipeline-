@@ -28,9 +28,7 @@ export const Route = createRootRoute({
 function RootDocument({ children }: { children: React.ReactNode }) {
   // The store is seeded deterministically for SSR, then rehydrated in the
   // browser from localStorage so a refresh keeps submitted cases.
-  useEffect(() => {
-    void hydrateStore()
-  }, [])
+  useEffect(hydrateStore, [])
 
   return (
     <html lang="en" suppressHydrationWarning>

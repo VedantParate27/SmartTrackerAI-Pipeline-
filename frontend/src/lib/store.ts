@@ -1,5 +1,4 @@
 import { useSyncExternalStore } from 'react'
-import { loadAppState, saveAppState } from './api'
 import { analyse } from './pipeline'
 import { POLICY_DOCUMENTS, SEED_CASES } from './seed'
 import { SESSIONS, canTransition } from './taxonomy'
@@ -15,18 +14,12 @@ import type {
 } from './types'
 
 /**
- * Small external store used by the UI. The browser starts from deterministic
- * seed data for SSR, then hydrates from FastAPI. localStorage is retained only
- * as an offline fallback when the backend cannot be reached.
+ * Client-side store standing in for the FastAPI backend. State is kept in a
+ * single object so the server render and the first client render match; the
+ * browser copy is rehydrated from localStorage after mount.
  */
 
 const STORAGE_KEY = 'smarttracker.state.v2'
-
-interface StoredState extends Pick<AppState, 'cases' | 'policies'> {
-  /** True until the same mutation version has been acknowledged by FastAPI. */
-  pending?: boolean
-  backendRevision?: number
-}
 
 /** Fixed reference time used for the server render and the seeded data. */
 const SEED_NOW = '2026-02-10T06:00:00.000Z'
@@ -38,9 +31,6 @@ export interface AppState {
   /** Current time, injected so rendering stays deterministic during SSR. */
   now: string
   hydrated: boolean
-  syncStatus: 'connecting' | 'online' | 'offline'
-  syncMessage: string
-  backendRevision: number
 }
 
 let requestCounter = 0
@@ -195,17 +185,11 @@ function buildSeedState(): AppState {
     session: SESSIONS[0],
     now: SEED_NOW,
     hydrated: false,
-    syncStatus: 'connecting',
-    syncMessage: 'Connecting to the FastAPI backend…',
-    backendRevision: 0,
   }
 }
 
 let state: AppState = buildSeedState()
 const listeners = new Set<() => void>()
-let mutationVersion = 0
-let persistTimer: number | null = null
-let writeQueue: Promise<void> = Promise.resolve()
 
 function emit() {
   for (const listener of listeners) listener()
@@ -213,77 +197,20 @@ function emit() {
 
 function set(updater: (current: AppState) => AppState) {
   state = updater(state)
-  mutationVersion += 1
   emit()
   persist()
 }
 
 function persist() {
   if (typeof window === 'undefined' || !state.hydrated) return
-  writeLocalFallback(true)
-  scheduleRemotePersist()
-}
-
-function writeLocalFallback(pending: boolean) {
   try {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({
-        cases: state.cases,
-        policies: state.policies,
-        pending,
-        backendRevision: state.backendRevision,
-      } satisfies StoredState),
+      JSON.stringify({ cases: state.cases, policies: state.policies }),
     )
   } catch {
     // Storage can be unavailable (private mode, quota). The app still works.
   }
-}
-
-function setSyncState(
-  syncStatus: AppState['syncStatus'],
-  syncMessage: string,
-  backendRevision = state.backendRevision,
-) {
-  state = { ...state, syncStatus, syncMessage, backendRevision }
-  emit()
-}
-
-/**
- * Coalesce rapid workflow steps and serialize writes so an earlier network
- * response can never overwrite a newer local change.
- */
-function scheduleRemotePersist() {
-  if (typeof window === 'undefined') return
-  if (persistTimer !== null) window.clearTimeout(persistTimer)
-
-  persistTimer = window.setTimeout(() => {
-    persistTimer = null
-    const payload = { cases: state.cases, policies: state.policies }
-    const persistedMutationVersion = mutationVersion
-
-    writeQueue = writeQueue
-      .catch(() => undefined)
-      .then(async () => {
-        try {
-          const response = await saveAppState(payload)
-          setSyncState(
-            'online',
-            'Workflow changes are saved to the FastAPI backend.',
-            response.revision,
-          )
-          if (mutationVersion === persistedMutationVersion) {
-            writeLocalFallback(false)
-          }
-        } catch (error) {
-          const detail = error instanceof Error ? ` ${error.message}` : ''
-          setSyncState(
-            'offline',
-            `Backend unavailable; changes are saved in this browser only.${detail}`,
-          )
-        }
-      })
-  }, 180)
 }
 
 function subscribe(listener: () => void) {
@@ -300,10 +227,10 @@ export function useAppState() {
 }
 
 /** Called once from the root component, after the first client render. */
-export async function hydrateStore() {
+export function hydrateStore() {
   if (state.hydrated || typeof window === 'undefined') return
 
-  let restored: StoredState | null = null
+  let restored: Pick<AppState, 'cases' | 'policies'> | null = null
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (raw) restored = JSON.parse(raw)
@@ -317,69 +244,13 @@ export async function hydrateStore() {
     policies: restored?.policies ?? state.policies,
     now: new Date().toISOString(),
     hydrated: true,
-    backendRevision: restored?.backendRevision ?? state.backendRevision,
-    syncStatus: 'connecting',
-    syncMessage: 'Connecting to the FastAPI backend…',
   }
   emit()
-
-  const versionBeforeLoad = mutationVersion
-  try {
-    const response = await loadAppState()
-    const localHasPendingChanges = restored?.pending === true
-
-    // If the user changed something while the request was in flight, keep the
-    // newer browser state and send it rather than replacing it with stale data.
-    // The same rule protects a change made shortly before a tab was closed.
-    if (
-      mutationVersion === versionBeforeLoad &&
-      response.state &&
-      !localHasPendingChanges
-    ) {
-      state = {
-        ...state,
-        cases: response.state.cases,
-        policies: response.state.policies,
-        now: new Date().toISOString(),
-      }
-    }
-
-    setSyncState(
-      'online',
-      'Connected to FastAPI. Workflow changes are shared and persistent.',
-      response.revision,
-    )
-
-    if (
-      !response.state ||
-      localHasPendingChanges ||
-      mutationVersion !== versionBeforeLoad
-    ) {
-      scheduleRemotePersist()
-    } else {
-      // Refresh the local fallback with the authoritative backend snapshot.
-      writeLocalFallback(false)
-    }
-  } catch (error) {
-    const detail = error instanceof Error ? ` ${error.message}` : ''
-    setSyncState(
-      'offline',
-      `Backend unavailable; using browser storage.${detail}`,
-    )
-  }
 }
 
 export function resetStore() {
   const seeded = buildSeedState()
-  state = {
-    ...seeded,
-    now: new Date().toISOString(),
-    hydrated: true,
-    syncStatus: state.syncStatus,
-    syncMessage: state.syncMessage,
-    backendRevision: state.backendRevision,
-  }
-  mutationVersion += 1
+  state = { ...seeded, now: new Date().toISOString(), hydrated: true }
   emit()
   persist()
 }

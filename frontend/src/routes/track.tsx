@@ -78,8 +78,8 @@ function TrackPage() {
         {id && !found ? (
           <Callout tone="warn" title="No case found">
             No grievance is stored against <span className="mono">{id}</span>.
-            Check the reference and try again. If the backend is offline, only
-            cases already cached in this browser are available.
+            Check the reference and try again. Cases created in this demo live
+            in your browser only.
           </Callout>
         ) : null}
 
