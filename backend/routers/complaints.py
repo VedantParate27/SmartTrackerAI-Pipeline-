@@ -142,8 +142,15 @@ def create_complaint(
 
     # Step 2 — Save to the database
     db.add(new_complaint)       # stage the new row
-    db.commit()                 # write it to the SQLite file
-    db.refresh(new_complaint)   # reload to get DB-assigned values (id, tracking_id, created_at)
+    try:
+        db.commit()                 # write it to the SQLite file
+        db.refresh(new_complaint)   # reload to get DB-assigned values
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create complaint.",
+        )
 
     # Step 3 — Return the response
     # FastAPI serialises new_complaint through ComplaintResponse automatically.

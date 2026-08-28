@@ -8,7 +8,7 @@
 #
 # This file uses Pydantic v2 syntax (installed: 2.5.x).
 
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -297,18 +297,16 @@ class ComplaintResponse(BaseModel):
 class AdminComplaintUpdateRequest(BaseModel):
 
     # New status — e.g. "pending", "in_progress", "resolved", "closed"
-    status: Optional[str] = Field(
+    status: Optional[Literal["pending", "in_progress", "resolved", "closed"]] = Field(
         default=None,
-        max_length=30,
-        description='New status value (e.g. "in_progress", "resolved", "closed")',
+        description='New status value ("pending", "in_progress", "resolved", "closed")',
         examples=["in_progress"],
     )
 
-    # New priority — e.g. "low", "medium", "high", "urgent"
-    priority: Optional[str] = Field(
+    # New priority — accepts only "low", "medium", "high", "urgent"
+    priority: Optional[Literal["low", "medium", "high", "urgent"]] = Field(
         default=None,
-        max_length=20,
-        description='New priority level (e.g. "low", "medium", "high", "urgent")',
+        description='New priority level ("low", "medium", "high", "urgent")',
         examples=["high"],
     )
 
@@ -319,6 +317,15 @@ class AdminComplaintUpdateRequest(BaseModel):
         description="Department assigned to handle the complaint",
         examples=["Public Works"],
     )
+
+    @field_validator("department")
+    @classmethod
+    def department_must_not_be_blank(cls, value: Optional[str]) -> Optional[str]:
+        """Strip surrounding whitespace; treat whitespace-only as None."""
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped if stripped else None
 
     # --- Model-level validator ---
     # Runs after all individual fields are validated.
@@ -333,3 +340,212 @@ class AdminComplaintUpdateRequest(BaseModel):
                 "At least one field (status, priority, or department) must be provided."
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 8 — AdminQueueItem
+# ---------------------------------------------------------------------------
+# Shape of each item returned by GET /admin/queue.
+#
+# This schema maps SQLAlchemy Complaint column names to the field names the
+# frontend TypeScript Complaint type expects, so the admin queue table renders
+# correctly without any frontend changes.
+#
+# Fields that do not yet exist in the database (AI classification, evidence,
+# audit trail, etc.) are returned as null / [] placeholders.  This keeps the
+# response forward-compatible: later tasks can replace placeholders with real
+# data without changing the contract.
+#
+# Example response item:
+# {
+#   "id": "TRK-a3f8b2c1",
+#   "requester_name": "Ashish Kumar",
+#   "contact": "ashish@example.com",
+#   "text": "My salary was deducted without notice...",
+#   "status": "pending",
+#   "priority": "Medium",
+#   "assigned_department": null,
+#   "language": "en",
+#   "submitted_at": "2025-01-15T10:30:00+00:00",
+#   "updated_at": "2025-01-15T10:30:00+00:00",
+#   "channel": "Backend",
+#   "classification": null,
+#   "entities": [],
+#   "evidence": [],
+#   "ai_draft": null,
+#   "edited_draft": null,
+#   "resolution": null,
+#   "closure_reason": null,
+#   "duplicate_of": null,
+#   "comments": [],
+#   "audit": [],
+#   "attachments": []
+# }
+from typing import List, Any
+
+class AdminQueueItem(BaseModel):
+
+    # --- Renamed fields (DB column → frontend field name) ---
+
+    # tracking_id → id: the public human-readable reference (e.g. "TRK-a3f8b2c1")
+    id: str = Field(..., alias="tracking_id", description="Public tracking reference")
+
+    # name → requester_name: stored on the complaint at submission time
+    requester_name: str = Field(..., alias="name", description="Name of the complainant")
+
+    # email → contact: stored on the complaint at submission time
+    contact: str = Field(..., alias="email", description="Contact email of the complainant")
+
+    # complaint_text → text: the full complaint message
+    text: str = Field(..., alias="complaint_text", description="Full complaint text")
+
+    # --- Pass-through fields (same column name, same meaning) ---
+
+    # status: passed through as-is for MVP.
+    # Backend vocab ("pending", "in_progress") does not match frontend vocab
+    # ("Pending Review", "In Progress") — status mapping is deferred to the
+    # complaint status lifecycle task.
+    status: str = Field(..., description="Current complaint status")
+
+    # priority: title-cased by the validator below ("medium" → "Medium")
+    priority: str = Field(..., description="Priority level, title-cased")
+
+    # language: ISO 639-1 code, e.g. "en"
+    language: str = Field(..., description="Language of the complaint")
+
+    # --- Renamed timestamp fields ---
+
+    # created_at → submitted_at
+    submitted_at: str = Field(
+        ...,
+        alias="created_at",
+        description="ISO 8601 timestamp of when the complaint was submitted",
+    )
+
+    # updated_at: same column name, just needs datetime → string conversion
+    updated_at: str = Field(
+        ...,
+        description="ISO 8601 timestamp of the last update",
+    )
+
+    # --- Renamed nullable field ---
+
+    # department → assigned_department: may be null until an admin assigns it
+    assigned_department: Optional[str] = Field(
+        default=None,
+        alias="department",
+        description="Department assigned to handle the complaint (may be null)",
+    )
+
+    # --- Hardcoded field (no DB column) ---
+
+    # channel: not stored in the DB; complaints submitted via the API are
+    # labelled "Backend" so the frontend has a non-null string to display.
+    channel: str = Field(
+        default="Backend",
+        description="Submission channel (hardcoded for backend-submitted complaints)",
+    )
+
+    # --- Null / empty placeholders for AI fields not yet in the database ---
+    # These will be replaced with real data in later tasks.
+
+    classification: Optional[Any] = Field(
+        default=None,
+        description="AI classification result (not yet available from DB)",
+    )
+    entities: List[Any] = Field(
+        default_factory=list,
+        description="Extracted entities (not yet available from DB)",
+    )
+    evidence: List[Any] = Field(
+        default_factory=list,
+        description="Retrieved policy evidence (not yet available from DB)",
+    )
+    ai_draft: Optional[Any] = Field(
+        default=None,
+        description="AI-generated draft response (not yet available from DB)",
+    )
+    edited_draft: Optional[str] = Field(
+        default=None,
+        description="Human-edited draft (not yet available from DB)",
+    )
+    resolution: Optional[Any] = Field(
+        default=None,
+        description="Approved resolution (not yet available from DB)",
+    )
+    closure_reason: Optional[str] = Field(
+        default=None,
+        description="Reason for closing or rejecting the complaint",
+    )
+    duplicate_of: Optional[str] = Field(
+        default=None,
+        description="Reference of the original case if this is a duplicate",
+    )
+    comments: List[Any] = Field(
+        default_factory=list,
+        description="Admin comments (not yet available from DB)",
+    )
+    audit: List[Any] = Field(
+        default_factory=list,
+        description="Audit trail events (not yet available from DB)",
+    )
+    attachments: List[Any] = Field(
+        default_factory=list,
+        description="File attachments (not yet available from DB)",
+    )
+
+    # Allow Pydantic to read values directly from SQLAlchemy ORM objects
+    # (not just plain dicts), and allow aliases to be used for population.
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True,
+    }
+
+    # --- Field-level validators ---
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def title_case_priority(cls, value: str) -> str:
+        """Normalize priority to title-case so frontend receives 'Medium' not 'medium'."""
+        return value.title() if isinstance(value, str) else value
+
+    @field_validator("submitted_at", "updated_at", mode="before")
+    @classmethod
+    def serialise_timestamps(cls, value) -> str:
+        """Convert datetime objects to ISO 8601 strings."""
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+# ---------------------------------------------------------------------------
+# SCHEMA 9 — ApproveResponseRequest
+# ---------------------------------------------------------------------------
+class ApproveResponseRequest(BaseModel):
+    text: str = Field(
+        ..., 
+        min_length=1, 
+        max_length=5000, 
+        description="Approved response text"
+    )
+    next_status: Literal["in_progress", "resolved"] = Field(
+        ..., 
+        description="Next backend status for the complaint"
+    )
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        """Reject whitespace-only text."""
+        if not value.strip():
+            raise ValueError("Text must not be blank")
+        return value
+
+# ---------------------------------------------------------------------------
+# SCHEMA 10 — ApproveResponseResult
+# ---------------------------------------------------------------------------
+class ApproveResponseResult(BaseModel):
+    tracking_id: str = Field(..., description="Public tracking reference")
+    response_text: str = Field(..., description="The approved text that was saved")
+    approved_by: str = Field(..., description="Name of the admin who approved")
+    approved_at: str = Field(..., description="ISO 8601 timestamp of approval")
+    status: str = Field(..., description="New status of the complaint")

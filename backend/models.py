@@ -37,7 +37,6 @@ class User(Base):
     __tablename__ = "users"   # exact name of the table in the database
 
     # --- Primary Key ---
-    # Every row gets a unique integer ID assigned automatically by the database.
     id = Column(Integer, primary_key=True, index=True)
 
     # --- Personal Info ---
@@ -46,19 +45,13 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)  # we never store plain passwords!
 
     # --- Role & Department ---
-    # role examples: "admin", "staff", "citizen"
-    # nullable=False with a default means every new user gets "citizen" unless specified
     role = Column(String(50), nullable=False, default="citizen")
     department = Column(String(100), nullable=True)  # optional; staff belong to a dept
 
     # --- Timestamp ---
-    # server_default is used so SQLite itself sets this if we forget to pass a value.
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     # --- Relationship ---
-    # This tells SQLAlchemy: "A User can have many Complaints."
-    # "back_populates" creates a two-way link so you can also go from
-    # a Complaint back to its User via complaint.owner
     complaints = relationship("Complaint", back_populates="owner")
 
     def __repr__(self):
@@ -68,8 +61,6 @@ class User(Base):
 # ---------------------------------------------------------------------------
 # MODEL 2 — Complaint
 # ---------------------------------------------------------------------------
-# Maps to a table called "complaints" in smarttracker.db.
-# Each row is one complaint submitted by a user or a citizen.
 class Complaint(Base):
     __tablename__ = "complaints"
 
@@ -77,9 +68,6 @@ class Complaint(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # --- Public Tracking ID ---
-    # A human-readable, shareable reference (e.g. "TRK-a3f8b2c1").
-    # Generated automatically when a new complaint is created.
-    # unique=True ensures no two complaints share the same tracking ID.
     tracking_id = Column(
         String(50),
         unique=True,
@@ -89,14 +77,9 @@ class Complaint(Base):
     )
 
     # --- Foreign Key (link to users table) ---
-    # This column stores the id of the User who submitted this complaint.
-    # nullable=True → a guest / citizen can submit without being logged in.
-    # ForeignKey("users.id") tells the database: "this must match a real users.id"
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
     # --- Submitter Details ---
-    # Stored directly on the complaint so it remains accurate even if the
-    # user later changes their profile.
     name = Column(String(100), nullable=False)           # name of the complainant
     email = Column(String(150), nullable=False)          # contact email
     phone = Column(String(20), nullable=True)            # optional phone number
@@ -106,28 +89,45 @@ class Complaint(Base):
     language = Column(String(10), nullable=False, default="en")  # ISO 639-1 code
 
     # --- Classification ---
-    # priority examples : "low", "medium", "high", "urgent"
-    # status examples   : "pending", "in_progress", "resolved", "closed"
-    # department        : which department should handle this complaint
     priority = Column(String(20), nullable=False, default="medium")
     status = Column(String(30), nullable=False, default="pending")
     department = Column(String(100), nullable=True)
 
     # --- Timestamps ---
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
-    # onupdate=utcnow → automatically refreshed every time this row is saved again
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
-    # --- Relationship (reverse side) ---
-    # "back_populates" must match the name used in User.complaints above.
-    # This lets you do: complaint.owner  →  the User who submitted it
+    # --- Relationship ---
     owner = relationship("User", back_populates="complaints")
+
+    @property
+    def resolution(self):
+        """Expose the latest approved response formatted for frontend resolution property."""
+        if self.responses:
+            latest = self.responses[-1]
+            approver_name = latest.approver.name if latest.approver else "Admin"
+            approved_at_str = (
+                latest.approved_at.isoformat()
+                if hasattr(latest.approved_at, "isoformat")
+                else str(latest.approved_at)
+            )
+            return {
+                "text": latest.response_text,
+                "approver": approver_name,
+                "sentAt": approved_at_str,
+            }
+        return None
 
     def __repr__(self):
         return (
             f"<Complaint id={self.id} tracking_id={self.tracking_id!r} "
             f"status={self.status!r} priority={self.priority!r}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# MODEL 3 — AppStateSnapshot
+# ---------------------------------------------------------------------------
 class AppStateSnapshot(Base):
     __tablename__ = "app_state_snapshots"
     id = Column(Integer, primary_key=True, default=1)
@@ -142,3 +142,23 @@ class AppStateSnapshot(Base):
 
     def __repr__(self):
         return f"<AppStateSnapshot revision={self.revision}>"
+
+
+# ---------------------------------------------------------------------------
+# MODEL 4 — Response
+# ---------------------------------------------------------------------------
+class Response(Base):
+    __tablename__ = "responses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=False, index=True)
+    response_text = Column(Text, nullable=False)
+    approved_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    approved_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    # Relationships
+    complaint = relationship("Complaint", backref="responses")
+    approver = relationship("User")
+
+    def __repr__(self):
+        return f"<Response id={self.id} complaint_id={self.complaint_id}>"

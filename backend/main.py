@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Database imports
 # ---------------------------------------------------------------------------
 from database import Base, engine
-from models import AppStateSnapshot, Complaint, User  # noqa: F401
+from models import AppStateSnapshot, Complaint, User, Response  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Router imports
