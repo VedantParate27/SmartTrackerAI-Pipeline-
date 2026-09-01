@@ -1,127 +1,139 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { Callout, EmptyState, StatusPill } from '#/components/ui'
-import { ageInHours, formatAge, percent } from '#/lib/format'
-import { isVisible, useAppState } from '#/lib/store'
-import { CONFIG, DEPARTMENTS, PRIORITIES, STATUSES } from '#/lib/taxonomy'
-import type { Complaint } from '#/lib/types'
+import {
+  BackendPriorityPill,
+  BackendStatusPill,
+  Callout,
+  EmptyState,
+  ErrorState,
+  Skeleton,
+  Spinner,
+} from '#/components/ui'
+import { getAdminQueue } from '#/lib/api'
+import type { AdminQueueItem } from '#/lib/api'
+import { isExpiredSession, signOut, useAuth } from '#/lib/auth'
+import {
+  backendCategory,
+  backendClassificationConfidence,
+} from '#/lib/complaint-format'
+import { formatAge } from '#/lib/format'
 
 export const Route = createFileRoute('/admin/')({ component: QueuePage })
 
-const AGE_OPTIONS = [
-  { value: 'any', label: 'Any age' },
-  { value: '24', label: 'Older than 24 h' },
-  { value: '72', label: 'Older than 72 h' },
-] as const
+function unique(values: Array<string | null | undefined>) {
+  return [
+    ...new Set(values.filter((value): value is string => Boolean(value))),
+  ].sort()
+}
 
-const CONFIDENCE_OPTIONS = [
-  { value: 'any', label: 'Any confidence' },
-  { value: 'low', label: 'Below threshold' },
-  { value: 'high', label: 'Above threshold' },
-] as const
-
-const OPEN_STATUSES = new Set(['Pending Review', 'Manual Triage'])
-
-function summary(item: Complaint) {
-  const text = item.text.trim()
+function summary(item: AdminQueueItem) {
+  const text = item.complaint_text.trim()
   return text.length > 120 ? `${text.slice(0, 120)}…` : text
 }
 
 function QueuePage() {
-  const { cases, session, now } = useAppState()
-
+  const { session } = useAuth()
+  const [cases, setCases] = useState<AdminQueueItem[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [expired, setExpired] = useState(false)
+  const [reload, setReload] = useState(0)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('any')
   const [department, setDepartment] = useState('any')
   const [priority, setPriority] = useState('any')
-  const [age, setAge] = useState<(typeof AGE_OPTIONS)[number]['value']>('any')
-  const [confidence, setConfidence] =
-    useState<(typeof CONFIDENCE_OPTIONS)[number]['value']>('any')
 
-  const permitted = useMemo(
-    () => cases.filter((item) => isVisible(item, session)),
-    [cases, session],
+  useEffect(() => {
+    if (!session || session.role !== 'admin') return
+    const controller = new AbortController()
+    setLoading(true)
+    setError(null)
+    getAdminQueue(session.accessToken, controller.signal)
+      .then(setCases)
+      .catch((caught: unknown) => {
+        if (controller.signal.aborted) return
+        setExpired(isExpiredSession(caught))
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : 'The complaint queue could not be loaded.',
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
+  }, [reload, session])
+
+  const statusOptions = useMemo(
+    () => unique(cases.map((item) => item.status)),
+    [cases],
   )
-
-  const stats = useMemo(
-    () => [
-      {
-        label: 'Awaiting review',
-        value: permitted.filter((item) => OPEN_STATUSES.has(item.status))
-          .length,
-      },
-      {
-        label: 'Manual triage',
-        value: permitted.filter((item) => item.status === 'Manual Triage')
-          .length,
-      },
-      {
-        label: 'Escalated',
-        value: permitted.filter((item) => item.status === 'Escalated').length,
-      },
-      {
-        label: 'With department',
-        value: permitted.filter(
-          (item) =>
-            item.status === 'Assigned to Department' ||
-            item.status === 'In Progress',
-        ).length,
-      },
-      {
-        label: 'Resolved or closed',
-        value: permitted.filter(
-          (item) => item.status === 'Resolved' || item.status === 'Closed',
-        ).length,
-      },
-    ],
-    [permitted],
+  const departmentOptions = useMemo(
+    () => unique(cases.map((item) => item.department)),
+    [cases],
+  )
+  const priorityOptions = useMemo(
+    () => unique(cases.map((item) => item.priority)),
+    [cases],
   )
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase()
+    return cases.filter((item) => {
+      const haystack = [
+        item.tracking_id,
+        item.complaint_text,
+        item.name,
+        item.email,
+        backendCategory(item.classification),
+        item.department,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      if (needle && !haystack.includes(needle)) return false
+      if (status !== 'any' && item.status !== status) return false
+      if (department !== 'any' && item.department !== department) {
+        return false
+      }
+      if (priority !== 'any' && item.priority !== priority) return false
+      return true
+    })
+  }, [cases, search, status, department, priority])
 
-    return permitted
-      .filter((item) => {
-        if (needle) {
-          const haystack = `${item.id} ${item.requesterName} ${item.text} ${item.classification?.intent ?? ''}`
-          if (!haystack.toLowerCase().includes(needle)) return false
-        }
-        if (status !== 'any' && item.status !== status) return false
-        if (priority !== 'any' && item.priority !== priority) return false
+  const stats = useMemo(() => {
+    const count = (wanted: string[]) =>
+      cases.filter((item) => wanted.includes(item.status.toLowerCase())).length
+    return [
+      { label: 'Total complaints', value: cases.length },
+      { label: 'Pending', value: count(['pending']) },
+      { label: 'In progress', value: count(['in_progress']) },
+      { label: 'Resolved', value: count(['resolved']) },
+      {
+        label: 'Unassigned',
+        value: cases.filter((item) => !item.department).length,
+      },
+    ]
+  }, [cases])
 
-        if (department !== 'any') {
-          const owner =
-            item.assignedDepartment ?? item.classification?.department
-          if (owner !== department) return false
-        }
-
-        if (age !== 'any' && ageInHours(item.submittedAt, now) < Number(age)) {
-          return false
-        }
-
-        if (confidence !== 'any') {
-          const score = item.classification?.confidence
-          if (score === undefined) return confidence === 'low'
-          const low = score < CONFIG.confidenceThreshold
-          if (confidence === 'low' ? !low : low) return false
-        }
-
-        return true
-      })
-      .sort(
-        (a, b) =>
-          new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
-      )
-  }, [permitted, search, status, department, priority, age, confidence, now])
+  if (!session || session.role !== 'admin') {
+    return (
+      <Callout tone="danger" title="Admin session required">
+        Sign in with a backend admin account to load this queue.
+      </Callout>
+    )
+  }
 
   return (
     <div className="grid gap-4">
-      {session.departments !== null ? (
-        <Callout tone="info" title="Department-limited view">
-          You are signed in as {session.role} for{' '}
-          {session.departments.join(', ')}. Cases routed elsewhere are not
-          listed.
-        </Callout>
+      {error ? (
+        <ErrorState
+          title="Queue request failed"
+          message={error}
+          onRetry={() => setReload((n) => n + 1)}
+          onReauth={expired ? signOut : undefined}
+        />
       ) : null}
 
       <section
@@ -130,208 +142,172 @@ function QueuePage() {
       >
         {stats.map((stat) => (
           <div key={stat.label} className="stat">
-            <p className="stat-value m-0">{stat.value}</p>
+            <p className="stat-value m-0">
+              {loading && cases.length === 0 ? (
+                <Skeleton className="mt-2 h-5 w-10" />
+              ) : (
+                stat.value
+              )}
+            </p>
             <p className="m-0 mt-0.5 text-xs muted">{stat.label}</p>
           </div>
         ))}
       </section>
 
-      {/* UI-02: queue filters for status, department, age, priority, confidence. */}
       <section className="card card-pad" aria-labelledby="filters-heading">
-        <h2 id="filters-heading" className="kicker">
-          Filters
-        </h2>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="sm:col-span-2 lg:col-span-1">
-            <label className="sr-only" htmlFor="q">
-              Search cases
-            </label>
-            <input
-              id="q"
-              className="input"
-              type="search"
-              placeholder="Search reference, requester or text"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-
-          <label className="sr-only" htmlFor="f-status">
-            Status
-          </label>
+        <div className="flex items-center justify-between gap-2">
+          <h2 id="filters-heading" className="kicker">
+            Filters
+          </h2>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={loading}
+            onClick={() => setReload((n) => n + 1)}
+          >
+            {loading ? <Spinner /> : null}
+            {loading ? 'Refreshing…' : 'Refresh from backend'}
+          </button>
+        </div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <input
+            className="input"
+            type="search"
+            aria-label="Search complaints"
+            placeholder="Search reference, requester or complaint text"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
           <select
-            id="f-status"
             className="select"
+            aria-label="Status"
             value={status}
             onChange={(event) => setStatus(event.target.value)}
           >
             <option value="any">Any status</option>
-            {STATUSES.map((item) => (
+            {statusOptions.map((item) => (
               <option key={item} value={item}>
-                {item}
+                {item.replaceAll('_', ' ')}
               </option>
             ))}
           </select>
-
-          <label className="sr-only" htmlFor="f-dept">
-            Department
-          </label>
           <select
-            id="f-dept"
             className="select"
+            aria-label="Department"
             value={department}
             onChange={(event) => setDepartment(event.target.value)}
           >
             <option value="any">Any department</option>
-            {DEPARTMENTS.map((item) => (
+            {departmentOptions.map((item) => (
               <option key={item} value={item}>
                 {item}
               </option>
             ))}
           </select>
-
-          <label className="sr-only" htmlFor="f-priority">
-            Priority
-          </label>
           <select
-            id="f-priority"
             className="select"
+            aria-label="Priority"
             value={priority}
             onChange={(event) => setPriority(event.target.value)}
           >
             <option value="any">Any priority</option>
-            {PRIORITIES.map((item) => (
+            {priorityOptions.map((item) => (
               <option key={item} value={item}>
-                {item} priority
-              </option>
-            ))}
-          </select>
-
-          <label className="sr-only" htmlFor="f-age">
-            Age
-          </label>
-          <select
-            id="f-age"
-            className="select"
-            value={age}
-            onChange={(event) =>
-              setAge(
-                event.target.value as (typeof AGE_OPTIONS)[number]['value'],
-              )
-            }
-          >
-            {AGE_OPTIONS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-
-          <label className="sr-only" htmlFor="f-confidence">
-            Confidence
-          </label>
-          <select
-            id="f-confidence"
-            className="select"
-            value={confidence}
-            onChange={(event) =>
-              setConfidence(
-                event.target
-                  .value as (typeof CONFIDENCE_OPTIONS)[number]['value'],
-              )
-            }
-          >
-            {CONFIDENCE_OPTIONS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
+                {item}
               </option>
             ))}
           </select>
         </div>
       </section>
 
-      <section className="card overflow-hidden" aria-labelledby="queue-heading">
+      <section
+        className="card overflow-hidden"
+        aria-labelledby="queue-heading"
+        aria-busy={loading}
+      >
         <div className="card-head">
           <h2 id="queue-heading" className="card-title">
-            Case queue
+            Live complaint queue
           </h2>
           <div className="text-xs muted">
-            {filtered.length} of {permitted.length} cases
+            {filtered.length} of {cases.length} complaints
           </div>
         </div>
 
-        <div className="queue-head kicker" aria-hidden="true">
-          <span>Reference</span>
-          <span>Complaint</span>
-          <span>Department</span>
-          <span>Confidence</span>
-          <span>Age</span>
-          <span />
-        </div>
-
-        <div className="divide-rows">
-          {filtered.length === 0 ? (
-            <EmptyState>No cases match the current filters.</EmptyState>
-          ) : (
-            filtered.map((item) => {
-              const owner =
-                item.assignedDepartment ??
-                item.classification?.department ??
-                '—'
-              const score = item.classification?.confidence
-              const low =
-                score !== undefined && score < CONFIG.confidenceThreshold
-
-              return (
-                <Link
-                  key={item.id}
-                  to="/admin/cases/$caseId"
-                  params={{ caseId: item.id }}
-                  className="queue-row"
-                >
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="mono font-bold">{item.id}</span>
-                    <StatusPill status={item.status} />
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="m-0 text-sm">{summary(item)}</p>
-                    <p className="m-0 mt-0.5 text-xs subtle">
-                      {item.classification?.intent ?? 'Not yet classified'} ·{' '}
-                      {item.requesterName} · {item.priority} priority
-                    </p>
-                  </div>
-
-                  <div className="text-xs muted" data-label="Department">
-                    {owner}
-                  </div>
-
-                  <div className="text-xs" data-label="Confidence">
-                    {score === undefined ? (
-                      <span className="subtle">Pending</span>
-                    ) : (
-                      <span className={low ? 'font-bold text-(--warn)' : ''}>
-                        {percent(score)}
-                        {low ? ' · low' : ''}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="text-xs muted" data-label="Age">
-                    {formatAge(item.submittedAt, now)}
-                  </div>
-
-                  <div
-                    className="text-right text-sm text-(--accent)"
-                    aria-hidden="true"
+        {loading && cases.length === 0 ? (
+          <div
+            className="divide-rows"
+            role="status"
+            aria-label="Loading complaints"
+          >
+            {[0, 1, 2, 3].map((row) => (
+              <div key={row} className="queue-row">
+                <Skeleton className="w-28" />
+                <Skeleton className="w-full" />
+                <Skeleton className="w-20" />
+                <Skeleton className="w-12" />
+                <Skeleton className="w-10" />
+                <Skeleton className="w-8" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="divide-rows">
+            {filtered.length === 0 ? (
+              <EmptyState>
+                {cases.length === 0
+                  ? 'The backend has no complaints yet. Submit one to populate this queue.'
+                  : 'No complaints match the current filters.'}
+              </EmptyState>
+            ) : (
+              filtered.map((item) => {
+                const category = backendCategory(item.classification)
+                const confidence = backendClassificationConfidence(
+                  item.classification,
+                )
+                return (
+                  <Link
+                    key={item.tracking_id}
+                    to="/admin/cases/$caseId"
+                    params={{ caseId: item.tracking_id }}
+                    className="queue-row"
                   >
-                    Open →
-                  </div>
-                </Link>
-              )
-            })
-          )}
-        </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="mono font-bold">{item.tracking_id}</span>
+                      <BackendStatusPill status={item.status} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="m-0 text-sm">{summary(item)}</p>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        <BackendPriorityPill priority={item.priority} />
+                        {category ? (
+                          <span className="pill">{category}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="text-xs muted" data-label="Department">
+                      {item.department ?? 'Unassigned'}
+                    </div>
+                    <div className="text-xs" data-label="Confidence">
+                      {confidence ?? (
+                        <span className="subtle">Not returned</span>
+                      )}
+                    </div>
+                    <div className="text-xs muted" data-label="Age">
+                      {formatAge(item.created_at, new Date().toISOString())}
+                    </div>
+                    <div
+                      className="text-right text-sm text-(--accent)"
+                      aria-hidden="true"
+                    >
+                      Open →
+                    </div>
+                  </Link>
+                )
+              })
+            )}
+          </div>
+        )}
       </section>
     </div>
   )

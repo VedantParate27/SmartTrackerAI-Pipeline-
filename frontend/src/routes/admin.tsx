@@ -1,11 +1,35 @@
-import { Link, Outlet, createFileRoute } from '@tanstack/react-router'
-import { resetStore, setSession, useAppState } from '#/lib/store'
-import { SESSIONS } from '#/lib/taxonomy'
+import { Outlet, createFileRoute } from '@tanstack/react-router'
+import AuthPanel from '#/components/AuthPanel'
+import { Callout } from '#/components/ui'
+import { signOut, useAuth } from '#/lib/auth'
 
 export const Route = createFileRoute('/admin')({ component: AdminLayout })
 
 function AdminLayout() {
-  const { session } = useAppState()
+  const { session, hydrated } = useAuth()
+
+  if (!hydrated || !session || session.role !== 'admin') {
+    return (
+      <main id="main" className="wrap page max-w-2xl">
+        <p className="kicker">Administration</p>
+        <h1 className="mt-1 text-2xl font-extrabold sm:text-3xl">
+          Review workspace
+        </h1>
+        <div className="mt-5">
+          <AuthPanel adminOnly />
+        </div>
+        {session && session.role !== 'admin' ? (
+          <div className="mt-4">
+            <Callout tone="danger" title="Backend access denied">
+              Frontend role switching has been removed. Sign in with a real
+              backend admin account to access{' '}
+              <span className="mono">/admin</span> endpoints.
+            </Callout>
+          </div>
+        ) : null}
+      </main>
+    )
+  }
 
   return (
     <main id="main" className="wrap page">
@@ -16,71 +40,17 @@ function AdminLayout() {
             Review workspace
           </h1>
         </div>
-
-        {/* NFR-05: the signed-in role decides what is visible and permitted. */}
-        <div className="flex w-full items-end gap-2 sm:w-auto">
-          <div className="min-w-0 flex-1 sm:flex-none">
-            <label className="kicker block" htmlFor="session">
-              Signed in as
-            </label>
-            <select
-              id="session"
-              className="select mt-1 text-sm"
-              value={session.role}
-              onChange={(event) => {
-                const next = SESSIONS.find(
-                  (item) => item.role === event.target.value,
-                )
-                if (next) setSession(next)
-              }}
-            >
-              {SESSIONS.map((item) => (
-                <option key={item.role} value={item.role}>
-                  {item.name} — {item.role}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button
-            type="button"
-            className="btn btn-sm shrink-0"
-            onClick={() => {
-              if (
-                window.confirm(
-                  'Reset the shared workspace back to the seeded cases and policies? Submitted cases will be removed from the backend snapshot.',
-                )
-              ) {
-                resetStore()
-              }
-            }}
-          >
-            Reset workspace
+        <div className="flex items-center gap-2 text-sm">
+          <span className="muted">
+            Backend role: <strong>admin</strong>
+          </span>
+          <button type="button" className="btn btn-sm" onClick={signOut}>
+            Sign out
           </button>
         </div>
       </div>
 
-      <nav
-        aria-label="Administration sections"
-        className="mt-4 flex gap-1 overflow-x-auto pb-1"
-      >
-        <Link
-          to="/admin"
-          activeOptions={{ exact: true }}
-          className="nav-link shrink-0"
-          activeProps={{ className: 'nav-link is-active shrink-0' }}
-        >
-          Case queue
-        </Link>
-        <Link
-          to="/admin/knowledge"
-          className="nav-link shrink-0"
-          activeProps={{ className: 'nav-link is-active shrink-0' }}
-        >
-          Policy knowledge base
-        </Link>
-      </nav>
-
-      <div className="mt-4">
+      <div className="mt-5">
         <Outlet />
       </div>
     </main>

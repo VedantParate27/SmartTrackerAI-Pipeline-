@@ -1,213 +1,278 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Callout, Field, PriorityPill, StatusPill } from '#/components/ui'
+import AuthPanel from '#/components/AuthPanel'
+import {
+  BackendPriorityPill,
+  BackendStatusPill,
+  Callout,
+  ErrorState,
+  Field,
+  LoadingState,
+  SectionCard,
+  Spinner,
+} from '#/components/ui'
+import { getComplaint, getMyComplaints } from '#/lib/api'
+import type { ComplaintResponse } from '#/lib/api'
+import { isExpiredSession, signOut, useAuth } from '#/lib/auth'
 import { formatDateTime } from '#/lib/format'
-import { findCase, useAppState } from '#/lib/store'
-import { STATUS_MEANING } from '#/lib/taxonomy'
-import type { CaseStatus } from '#/lib/types'
 
 export const Route = createFileRoute('/track')({
-  // `id` is optional so other pages can link to /track without a reference.
   validateSearch: (search: Record<string, unknown>): { id?: string } =>
     typeof search.id === 'string' && search.id ? { id: search.id } : {},
   component: TrackPage,
 })
 
-/** The requester-facing slice of the lifecycle in Appendix A.1. */
-const VISIBLE_LIFECYCLE: CaseStatus[] = [
-  'Submitted',
-  'AI Analysis',
-  'Pending Review',
-  'Assigned to Department',
-  'In Progress',
-  'Resolved',
-  'Closed',
-]
-
-/** BR-05: internal AI reasoning and staff notes stay out of the requester view. */
-const HIDDEN_ACTIONS = [
-  'AI analysis completed',
-  'Classification overridden',
-  'Draft edited',
-]
-
 function TrackPage() {
   const { id = '' } = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
+  const { session, hydrated } = useAuth()
   const [query, setQuery] = useState(id)
+  const [complaint, setComplaint] = useState<ComplaintResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [expired, setExpired] = useState(false)
+  const [reload, setReload] = useState(0)
+  const [mine, setMine] = useState<ComplaintResponse[] | null>(null)
+  const [mineLoading, setMineLoading] = useState(false)
+  const [mineError, setMineError] = useState<string | null>(null)
 
-  // Subscribe so the view updates while the pipeline runs.
-  useAppState()
-  const found = id ? findCase(id) : null
+  useEffect(() => setQuery(id), [id])
+
+  // GET /complaints/my scopes to the JWT, so a signed-in user never has to
+  // remember a tracking reference to find their own cases.
+  useEffect(() => {
+    if (!session) {
+      setMine(null)
+      setMineError(null)
+      return
+    }
+    const controller = new AbortController()
+    setMineLoading(true)
+    setMineError(null)
+    getMyComplaints(session.accessToken, controller.signal)
+      .then(setMine)
+      .catch((caught: unknown) => {
+        if (controller.signal.aborted) return
+        setMine(null)
+        if (isExpiredSession(caught)) setExpired(true)
+        setMineError(
+          caught instanceof Error
+            ? caught.message
+            : 'Your complaints could not be loaded.',
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMineLoading(false)
+      })
+    return () => controller.abort()
+  }, [session, reload])
+
+  useEffect(() => {
+    if (!id || !session) {
+      setComplaint(null)
+      setError(null)
+      setLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    setLoading(true)
+    setError(null)
+    getComplaint(id.trim(), session.accessToken, controller.signal)
+      .then(setComplaint)
+      .catch((caught: unknown) => {
+        if (controller.signal.aborted) return
+        setComplaint(null)
+        setExpired(isExpiredSession(caught))
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : 'The complaint could not be loaded.',
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [id, session, reload])
 
   return (
     <main id="main" className="wrap page max-w-2xl">
-      <p className="kicker">Case status</p>
+      <p className="kicker">Live case status</p>
       <h1 className="mt-2 text-2xl font-extrabold sm:text-3xl">Track a case</h1>
       <p className="mt-2 text-sm muted">
-        Enter the reference number from your acknowledgement, for example{' '}
-        <span className="mono">GRV-2026-0431</span>.
+        Enter the exact <span className="mono">tracking_id</span> returned by
+        FastAPI, for example <span className="mono">TRK-a3f8b2c1</span>.
       </p>
 
-      <form
-        className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-end"
-        onSubmit={(event) => {
-          event.preventDefault()
-          navigate({ search: { id: query.trim() } })
-        }}
-      >
-        <div className="flex-1">
-          <Field label="Tracking reference" htmlFor="track-id">
-            <input
-              id="track-id"
-              className="input"
-              value={query}
-              placeholder="GRV-2026-0431"
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </Field>
+      {!hydrated || !session ? (
+        <div className="mt-5">
+          <AuthPanel />
         </div>
-        <button type="submit" className="btn btn-primary">
-          Check status
-        </button>
-      </form>
+      ) : (
+        <>
+          <div className="mt-4">
+            <AuthPanel />
+          </div>
+          <form
+            className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-end"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void navigate({ search: { id: query.trim() } })
+            }}
+          >
+            <div className="flex-1">
+              <Field label="Tracking reference" htmlFor="track-id" required>
+                <input
+                  id="track-id"
+                  className="input"
+                  value={query}
+                  placeholder="TRK-a3f8b2c1"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </Field>
+            </div>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={loading}
+            >
+              {loading ? <Spinner /> : null}
+              {loading ? 'Checking…' : 'Check status'}
+            </button>
+          </form>
+        </>
+      )}
 
-      <div className="mt-6" aria-live="polite">
-        {id && !found ? (
-          <Callout tone="warn" title="No case found">
-            No grievance is stored against <span className="mono">{id}</span>.
-            Check the reference and try again. If the backend is offline, only
-            cases already cached in this browser are available.
-          </Callout>
+      <div className="mt-6" aria-live="polite" aria-busy={loading}>
+        {loading ? (
+          <LoadingState label="Requesting the current record from FastAPI…" />
         ) : null}
 
-        {found ? (
+        {error && !loading ? (
+          <ErrorState
+            title="Complaint could not be loaded"
+            message={error}
+            onRetry={() => setReload((n) => n + 1)}
+            onReauth={expired ? signOut : undefined}
+          />
+        ) : null}
+
+        {complaint && !loading ? (
           <div className="grid gap-4">
             <section className="card card-pad">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="kicker">Reference</span>
+                <div>
+                  <span className="kicker">Tracking reference</span>
                   <p className="mono mt-0.5 text-lg font-extrabold">
-                    {found.id}
+                    {complaint.tracking_id}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  <StatusPill status={found.status} />
-                  <PriorityPill priority={found.priority} />
+                  <BackendStatusPill status={complaint.status} />
+                  <BackendPriorityPill priority={complaint.priority} />
                 </div>
               </div>
 
-              <p className="mt-3 text-sm muted">
-                {STATUS_MEANING[found.status]}
-              </p>
-
               <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                 <div>
-                  <dt className="kicker">Submitted</dt>
-                  <dd className="m-0">{formatDateTime(found.submittedAt)}</dd>
-                </div>
-                <div>
-                  <dt className="kicker">Last updated</dt>
-                  <dd className="m-0">{formatDateTime(found.updatedAt)}</dd>
-                </div>
-                <div>
-                  <dt className="kicker">Handled by</dt>
+                  <dt className="kicker">Created</dt>
                   <dd className="m-0">
-                    {found.assignedDepartment ?? 'Not yet assigned'}
+                    {formatDateTime(complaint.created_at)}
                   </dd>
                 </div>
                 <div>
-                  <dt className="kicker">Attachments</dt>
-                  <dd className="m-0">{found.attachments.length}</dd>
+                  <dt className="kicker">Department</dt>
+                  <dd className="m-0">
+                    {complaint.department ?? 'Not yet assigned'}
+                  </dd>
                 </div>
               </dl>
             </section>
 
-            <section className="card">
-              <div className="card-head">
-                <h2 className="card-title">Progress</h2>
-              </div>
-              <div className="card-pad">
-                <ol className="timeline">
-                  {VISIBLE_LIFECYCLE.map((status) => {
-                    const reached =
-                      VISIBLE_LIFECYCLE.indexOf(status) <=
-                      VISIBLE_LIFECYCLE.indexOf(found.status)
-                    const current = status === found.status
-                    return (
-                      <li key={status} data-current={current}>
-                        <p
-                          className={`m-0 text-sm font-bold ${reached ? '' : 'subtle'}`}
-                        >
-                          {status}
-                          {current ? ' — current' : ''}
-                        </p>
-                      </li>
-                    )
-                  })}
-                </ol>
-                {!VISIBLE_LIFECYCLE.includes(found.status) ? (
-                  <div className="mt-3">
-                    <Callout
-                      tone="warn"
-                      title={`Current status: ${found.status}`}
-                    >
-                      {STATUS_MEANING[found.status]}
-                    </Callout>
-                  </div>
-                ) : null}
-              </div>
-            </section>
+            <SectionCard title="Original complaint">
+              <p className="original-text m-0">{complaint.complaint_text}</p>
+            </SectionCard>
 
-            {found.resolution ? (
-              <section className="card">
-                <div className="card-head">
-                  <h2 className="card-title">Approved response</h2>
-                  <div className="text-xs muted">
-                    Approved by {found.resolution.approver} ·{' '}
-                    {formatDateTime(found.resolution.sentAt)}
-                  </div>
-                </div>
-                <div className="card-pad">
-                  <div className="draft-box">{found.resolution.text}</div>
-                </div>
-              </section>
-            ) : (
-              <Callout tone="info" title="Awaiting human approval">
-                No response has been sent yet. A support administrator reviews
-                the analysis and the policy evidence before anything is sent to
-                you.
-              </Callout>
-            )}
-
-            <section className="card">
-              <div className="card-head">
-                <h2 className="card-title">History</h2>
-              </div>
-              <ul className="m-0 list-none divide-rows p-0">
-                {found.audit
-                  .filter((event) => !HIDDEN_ACTIONS.includes(event.action))
-                  .map((event) => (
-                    <li key={event.id} className="px-4 py-2.5 text-sm">
-                      <p className="m-0 font-semibold">{event.action}</p>
-                      <p className="m-0 text-xs subtle">
-                        {formatDateTime(event.at)}
-                      </p>
-                    </li>
-                  ))}
-              </ul>
-            </section>
+            <Callout tone="info" title="Approved replies are not on this route">
+              An admin approval is stored by{' '}
+              <span className="mono">
+                POST /admin/responses/{'{id}'}/approve
+              </span>
+              , but{' '}
+              <span className="mono">GET /complaints/{'{tracking_id}'}</span>{' '}
+              returns only the six fields above. The reply text is withheld here
+              rather than guessed; exposing it to the complainant needs a
+              backend field.
+            </Callout>
           </div>
         ) : null}
       </div>
 
-      {!found ? (
-        <p className="mt-6 text-sm muted">
-          Do not have a reference yet?{' '}
-          <Link to="/submit">Submit a grievance</Link>.
-        </p>
+      {session ? (
+        <section className="mt-8" aria-labelledby="mine-heading">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 id="mine-heading" className="text-base font-extrabold">
+              Your complaints
+            </h2>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={mineLoading}
+              onClick={() => setReload((n) => n + 1)}
+            >
+              {mineLoading ? <Spinner /> : null}
+              {mineLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+
+          <div className="mt-3" aria-busy={mineLoading}>
+            {mineError ? (
+              <ErrorState
+                title="Your complaints could not be loaded"
+                message={mineError}
+                onRetry={() => setReload((n) => n + 1)}
+                onReauth={expired ? signOut : undefined}
+              />
+            ) : mineLoading && !mine ? (
+              <LoadingState label="Loading your complaints…" />
+            ) : mine && mine.length > 0 ? (
+              <ul className="m-0 grid list-none gap-2 p-0">
+                {mine.map((entry) => (
+                  <li key={entry.tracking_id}>
+                    <Link
+                      to="/track"
+                      search={{ id: entry.tracking_id }}
+                      className="card card-pad flex flex-wrap items-center justify-between gap-2 no-underline"
+                    >
+                      <span className="min-w-0">
+                        <span className="mono block font-bold text-(--fg)">
+                          {entry.tracking_id}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs muted">
+                          {entry.complaint_text}
+                        </span>
+                      </span>
+                      <span className="flex shrink-0 flex-wrap gap-1.5">
+                        <BackendStatusPill status={entry.status} />
+                        <BackendPriorityPill priority={entry.priority} />
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="m-0 text-sm muted">
+                You have not submitted any complaints yet.{' '}
+                <Link to="/submit">Submit a grievance</Link>.
+              </p>
+            )}
+          </div>
+        </section>
       ) : null}
     </main>
   )

@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { DemoNotice } from '#/components/ui'
+import { BackendStatus } from '#/components/ui'
 
 export const Route = createFileRoute('/')({ component: Home })
 
@@ -7,27 +7,27 @@ const PIPELINE = [
   {
     step: '01',
     title: 'Intake',
-    body: 'You describe the problem in plain language. The case is stored unchanged and given a tracking reference.',
+    body: 'FastAPI stores the complaint and returns the tracking reference used everywhere else.',
   },
   {
     step: '02',
     title: 'Classify & route',
-    body: 'Intent, entities and the responsible department are predicted, with a confidence score and alternatives.',
+    body: 'Category, entities, department and confidence appear only when backend processing returns them.',
   },
   {
     step: '03',
     title: 'Retrieve policy',
-    body: 'Dense vector search and BM25 keyword search run over active policy versions only.',
+    body: 'Missing policy or retrieval results stay visibly unavailable instead of being filled in.',
   },
   {
     step: '04',
     title: 'Draft with citations',
-    body: 'A reply is drafted from the retrieved evidence alone. Without evidence, the system abstains.',
+    body: 'The UI accepts a backend draft or AI failure state and never assumes generation succeeded.',
   },
   {
     step: '05',
     title: 'Human approval',
-    body: 'An administrator edits, approves or reassigns. Nothing is sent to you without that approval.',
+    body: 'An admin approves the reply through the backend, which stores it and returns the new status.',
   },
 ]
 
@@ -43,9 +43,9 @@ const ENTRIES = [
     body: 'Check status with your reference number.',
   },
   {
-    to: '/guide',
-    label: 'Document guide',
-    body: 'Checklists, steps, fees and timelines.',
+    to: '/admin',
+    label: 'Review workspace',
+    body: 'Admin queue, drafts and approvals.',
   },
 ] as const
 
@@ -58,10 +58,10 @@ function Home() {
           Describe the problem. We find the right desk and the right policy.
         </h1>
         <p className="mt-3 text-base leading-relaxed muted sm:text-lg">
-          SmartTracker AI reads your complaint, recommends the responsible
-          department and drafts a reply that cites the policy it relied on.
-          Every reply is reviewed and approved by a person before it reaches
-          you.
+          SmartTracker AI sends your complaint through the FastAPI request model
+          and displays the backend response without inventing fields.
+          Classification, evidence, and approved replies appear when the API
+          provides them.
         </p>
       </section>
 
@@ -75,7 +75,7 @@ function Home() {
       </div>
 
       <div className="mt-8">
-        <DemoNotice />
+        <BackendStatus />
       </div>
 
       <section className="mt-10" aria-labelledby="entries-heading">
@@ -120,8 +120,8 @@ function Home() {
         <ul className="mt-3 grid list-none gap-2 p-0 text-sm muted sm:grid-cols-2">
           {[
             'Send an AI-written response without a named human approver.',
-            'State a policy rule that is not backed by a retrieved, active source.',
-            'Silently approve a low-confidence classification — those go to manual triage.',
+            'Show mock policy evidence when retrieval results are missing.',
+            'Hide a missing or low-confidence AI result behind a fake success state.',
             'Give legal, medical or emergency advice, or make a final disciplinary decision.',
           ].map((item) => (
             <li key={item} className="card card-pad flex gap-2">

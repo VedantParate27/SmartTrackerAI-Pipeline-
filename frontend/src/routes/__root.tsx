@@ -1,8 +1,13 @@
 import { useEffect } from 'react'
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
+import {
+  HeadContent,
+  Link,
+  Scripts,
+  createRootRoute,
+} from '@tanstack/react-router'
 import Footer from '#/components/Footer'
 import Header from '#/components/Header'
-import { hydrateStore } from '#/lib/store'
+import { hydrateAuth } from '#/lib/auth'
 
 import appCss from '#/styles.css?url'
 
@@ -17,19 +22,44 @@ export const Route = createRootRoute({
       {
         name: 'description',
         content:
-          'Submit a grievance in plain language, track its status, and let administrators review AI classification, policy evidence and grounded draft responses.',
+          'Submit and track grievances through the SmartTracker FastAPI contract, with optional AI details shown only when the backend returns them.',
       },
     ],
     links: [{ rel: 'stylesheet', href: appCss }],
   }),
   shellComponent: RootDocument,
+  notFoundComponent: NotFound,
 })
 
+function NotFound() {
+  return (
+    <main id="main" className="wrap page max-w-2xl">
+      <p className="kicker">404</p>
+      <h1 className="mt-2 text-2xl font-extrabold sm:text-3xl">
+        That page does not exist
+      </h1>
+      <p className="mt-2 text-sm muted">
+        The link may be out of date. Everything the app can do starts from one
+        of these.
+      </p>
+      <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+        <Link to="/" className="btn btn-primary btn-block sm:w-auto">
+          Home
+        </Link>
+        <Link to="/submit" className="btn btn-block sm:w-auto">
+          Submit a grievance
+        </Link>
+        <Link to="/track" className="btn btn-block sm:w-auto">
+          Track a case
+        </Link>
+      </div>
+    </main>
+  )
+}
+
 function RootDocument({ children }: { children: React.ReactNode }) {
-  // The store is seeded deterministically for SSR, then rehydrated in the
-  // browser from localStorage so a refresh keeps submitted cases.
   useEffect(() => {
-    void hydrateStore()
+    hydrateAuth()
   }, [])
 
   return (

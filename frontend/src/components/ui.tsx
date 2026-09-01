@@ -1,77 +1,36 @@
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { API_BASE_URL } from '#/lib/api'
-import { useAppState } from '#/lib/store'
-import { STATUS_TONE } from '#/lib/taxonomy'
-import type { Tone } from '#/lib/taxonomy'
-import { percent } from '#/lib/format'
-import type { CaseStatus, Priority } from '#/lib/types'
+import { API_BASE_URL, checkHealth } from '#/lib/api'
 
-export function StatusPill({ status }: { status: CaseStatus }) {
+export type Tone = 'neutral' | 'info' | 'warn' | 'ok' | 'danger'
+
+function backendStatusTone(status: string): Tone {
+  const value = status.toLowerCase()
+  if (value === 'resolved') return 'ok'
+  if (value === 'rejected') return 'danger'
+  if (value === 'escalated') return 'warn'
+  if (value === 'in_progress') return 'info'
+  return 'neutral'
+}
+
+export function BackendStatusPill({ status }: { status: string }) {
   return (
-    <span className="pill" data-tone={STATUS_TONE[status]}>
-      {status}
+    <span className="pill" data-tone={backendStatusTone(status)}>
+      {status.replaceAll('_', ' ')}
     </span>
   )
 }
 
-const PRIORITY_TONE: Record<Priority, Tone> = {
-  Low: 'neutral',
-  Medium: 'info',
-  High: 'warn',
-}
-
-export function PriorityPill({ priority }: { priority: Priority }) {
+export function BackendPriorityPill({ priority }: { priority: string }) {
+  const tone: Tone = ['high', 'urgent'].includes(priority.toLowerCase())
+    ? 'warn'
+    : priority.toLowerCase() === 'medium'
+      ? 'info'
+      : 'neutral'
   return (
-    <span className="pill" data-tone={PRIORITY_TONE[priority]}>
+    <span className="pill" data-tone={tone}>
       {priority} priority
     </span>
-  )
-}
-
-/**
- * UI-04: confidence is communicated with a number and a word, so the meaning
- * never depends on colour alone.
- */
-export function ConfidenceMeter({
-  value,
-  threshold,
-  label = 'Classifier confidence',
-}: {
-  value: number
-  threshold: number
-  label?: string
-}) {
-  const low = value < threshold
-  return (
-    <div>
-      <div className="mb-1 flex items-baseline justify-between gap-2">
-        <span className="kicker">{label}</span>
-        <span className="text-sm font-extrabold">
-          {percent(value)}{' '}
-          <span className={low ? 'text-(--warn)' : 'text-(--ok)'}>
-            {low ? '· below threshold' : '· above threshold'}
-          </span>
-        </span>
-      </div>
-      <div
-        className="meter"
-        role="meter"
-        aria-valuenow={Math.round(value * 100)}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`${label}: ${percent(value)}, threshold ${percent(threshold)}`}
-      >
-        <div
-          className="meter-fill"
-          data-tone={low ? 'warn' : 'ok'}
-          style={{ width: `${Math.max(3, Math.round(value * 100))}%` }}
-        />
-      </div>
-      <p className="hint">
-        Configured threshold: {percent(threshold)}. Cases below it go to manual
-        triage.
-      </p>
-    </div>
   )
 }
 
@@ -176,26 +135,121 @@ export function EmptyState({ children }: { children: ReactNode }) {
   return <p className="px-1 py-8 text-center text-sm muted">{children}</p>
 }
 
-export function DemoNotice() {
-  const { syncStatus, syncMessage, backendRevision } = useAppState()
+/** Inline busy indicator. Purely decorative — the label beside it does the talking. */
+export function Spinner() {
+  return <span className="spinner" aria-hidden="true" />
+}
+
+/** Placeholder bar used while a request is still in flight. */
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <span className={`skeleton ${className}`} aria-hidden="true" />
+}
+
+/** A full-width busy panel for a screen that has nothing to show yet. */
+export function LoadingState({ label }: { label: string }) {
+  return (
+    <div className="load-panel" role="status">
+      <Spinner />
+      <span>{label}</span>
+    </div>
+  )
+}
+
+/**
+ * The single failure surface for every request. `onRetry` re-issues the call;
+ * `onReauth` appears for 401/403 so an expired token can be cleared without
+ * hunting for the sign-out button.
+ */
+export function ErrorState({
+  title,
+  message,
+  onRetry,
+  onReauth,
+}: {
+  title: string
+  message: string
+  onRetry?: () => void
+  onReauth?: () => void
+}) {
+  return (
+    <Callout tone="danger" title={title}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span>{message}</span>
+        <span className="flex shrink-0 gap-1.5">
+          {onReauth ? (
+            <button type="button" className="btn btn-sm" onClick={onReauth}>
+              Sign in again
+            </button>
+          ) : null}
+          {onRetry ? (
+            <button type="button" className="btn btn-sm" onClick={onRetry}>
+              Retry
+            </button>
+          ) : null}
+        </span>
+      </div>
+    </Callout>
+  )
+}
+
+/** Live reachability of the FastAPI instance the app is pointed at. */
+export function BackendStatus() {
+  const [health, setHealth] = useState<'checking' | 'online' | 'offline'>(
+    'checking',
+  )
+  const [message, setMessage] = useState('Checking the FastAPI backend…')
+  const [reload, setReload] = useState(0)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setHealth('checking')
+    setMessage('Checking the FastAPI backend…')
+    checkHealth(controller.signal)
+      .then(() => {
+        if (controller.signal.aborted) return
+        setHealth('online')
+        setMessage('FastAPI is reachable. All data on screen comes from it.')
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        setHealth('offline')
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : 'The backend is unavailable.',
+        )
+      })
+    return () => controller.abort()
+  }, [reload])
+
   const tone =
-    syncStatus === 'online' ? 'ok' : syncStatus === 'offline' ? 'warn' : 'info'
+    health === 'online' ? 'ok' : health === 'offline' ? 'danger' : 'info'
   const title =
-    syncStatus === 'online'
+    health === 'online'
       ? 'Backend connected'
-      : syncStatus === 'offline'
-        ? 'Offline fallback active'
+      : health === 'offline'
+        ? 'Backend unavailable'
         : 'Connecting to backend'
 
   return (
     <Callout tone={tone} title={title}>
-      {syncMessage}{' '}
-      <span className="subtle">
-        API: <span className="mono">{API_BASE_URL}</span>
-        {backendRevision > 0 ? ` · revision ${backendRevision}` : ''}. AI
-        analysis remains the deterministic prototype pipeline until a model
-        provider and vector index are configured.
-      </span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span>
+          {message}{' '}
+          <span className="subtle">
+            API: <span className="mono">{API_BASE_URL}</span>
+          </span>
+        </span>
+        {health === 'offline' ? (
+          <button
+            type="button"
+            className="btn btn-sm shrink-0"
+            onClick={() => setReload((n) => n + 1)}
+          >
+            Retry
+          </button>
+        ) : null}
+      </div>
     </Callout>
   )
 }

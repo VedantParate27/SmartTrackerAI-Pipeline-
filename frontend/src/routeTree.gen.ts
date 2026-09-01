@@ -11,11 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
-import { Route as GuideRouteImport } from './routes/guide'
 import { Route as SubmitRouteImport } from './routes/submit'
 import { Route as TrackRouteImport } from './routes/track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
-import { Route as AdminKnowledgeRouteImport } from './routes/admin.knowledge'
 import { Route as AdminCasesCaseIdRouteImport } from './routes/admin.cases.$caseId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -26,11 +24,6 @@ const IndexRoute = IndexRouteImport.update({
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const GuideRoute = GuideRouteImport.update({
-  id: '/guide',
-  path: '/guide',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SubmitRoute = SubmitRouteImport.update({
@@ -48,11 +41,6 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
-const AdminKnowledgeRoute = AdminKnowledgeRouteImport.update({
-  id: '/knowledge',
-  path: '/knowledge',
-  getParentRoute: () => AdminRoute,
-} as any)
 const AdminCasesCaseIdRoute = AdminCasesCaseIdRouteImport.update({
   id: '/cases/$caseId',
   path: '/cases/$caseId',
@@ -62,19 +50,15 @@ const AdminCasesCaseIdRoute = AdminCasesCaseIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
-  '/guide': typeof GuideRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
-  '/admin/knowledge': typeof AdminKnowledgeRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/guide': typeof GuideRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
-  '/admin/knowledge': typeof AdminKnowledgeRoute
   '/admin': typeof AdminIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
 }
@@ -82,41 +66,23 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
-  '/guide': typeof GuideRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
-  '/admin/knowledge': typeof AdminKnowledgeRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
-    | '/admin'
-    | '/guide'
-    | '/submit'
-    | '/track'
-    | '/admin/knowledge'
-    | '/admin/'
-    | '/admin/cases/$caseId'
+    '/' | '/admin' | '/submit' | '/track' | '/admin/' | '/admin/cases/$caseId'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/guide'
-    | '/submit'
-    | '/track'
-    | '/admin/knowledge'
-    | '/admin'
-    | '/admin/cases/$caseId'
+  to: '/' | '/submit' | '/track' | '/admin' | '/admin/cases/$caseId'
   id:
     | '__root__'
     | '/'
     | '/admin'
-    | '/guide'
     | '/submit'
     | '/track'
-    | '/admin/knowledge'
     | '/admin/'
     | '/admin/cases/$caseId'
   fileRoutesById: FileRoutesById
@@ -124,7 +90,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
-  GuideRoute: typeof GuideRoute
   SubmitRoute: typeof SubmitRoute
   TrackRoute: typeof TrackRoute
 }
@@ -143,13 +108,6 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/guide': {
-      id: '/guide'
-      path: '/guide'
-      fullPath: '/guide'
-      preLoaderRoute: typeof GuideRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/submit': {
@@ -173,13 +131,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
-    '/admin/knowledge': {
-      id: '/admin/knowledge'
-      path: '/knowledge'
-      fullPath: '/admin/knowledge'
-      preLoaderRoute: typeof AdminKnowledgeRouteImport
-      parentRoute: typeof AdminRoute
-    }
     '/admin/cases/$caseId': {
       id: '/admin/cases/$caseId'
       path: '/cases/$caseId'
@@ -191,13 +142,11 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
-  AdminKnowledgeRoute: typeof AdminKnowledgeRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCasesCaseIdRoute: typeof AdminCasesCaseIdRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
-  AdminKnowledgeRoute: AdminKnowledgeRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminCasesCaseIdRoute: AdminCasesCaseIdRoute,
 }
@@ -207,7 +156,6 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
-  GuideRoute: GuideRoute,
   SubmitRoute: SubmitRoute,
   TrackRoute: TrackRoute,
 }
