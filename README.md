@@ -37,6 +37,9 @@ Admin login created by `create_admin.py`:
 ```
 admin@smar9cdttracker.com / admin12345
 ```
+## AI module
+
+The `ai/` folder contains the classification, retrieval, and response-generation pipeline. See `ai/README.md` for setup and integration details. It currently writes results to its own local database as a placeholder — needs to be reconciled with the backend's database before full integration.
 
 ## Reset the database
 
