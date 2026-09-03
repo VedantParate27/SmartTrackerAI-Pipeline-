@@ -1,16 +1,18 @@
+from config import MODELS_TO_TRY, MAX_RETRY_CYCLES, RETRY_WAIT_SECONDS, ENV_PATH
 from google import genai
 import os
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=r"C:\Users\SwakeetMali\smarttracker-ai\.env")
+load_dotenv(dotenv_path=ENV_PATH)
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 GEN_PROMPT = """You are a customer support assistant drafting a reply to a customer complaint.
 
 STRICT RULES:
 - Only use facts that appear in the CONTEXT below. Do not invent policies, refund amounts, timelines, or promises not explicitly stated in the context.
-- After each factual claim, cite the source document in square brackets, like [Source: filename.txt].
-- If the CONTEXT does not contain enough information to resolve the complaint, say so honestly and state that the case will be escalated for manual review — do not guess.
+- After each factual claim drawn from a policy document, cite that source using the format [Source: filename.txt]. Only use this citation format for real policy documents provided in the CONTEXT below — never invent a source name, and never use the citation format to describe your own reasoning, limitations, or lack of information. State those plainly in your own words instead, with no bracketed citation attached.
+- If the CONTEXT does not contain enough information to resolve the complaint, say so honestly in plain language and state that the case will be escalated for manual review — do not guess, and do not cite a source for this statement since it is not a policy fact.
+- Always respond in English, regardless of the language the complaint was written in, unless explicitly instructed otherwise.
 - Keep the tone professional and empathetic.
 
 CONTEXT:
@@ -32,8 +34,8 @@ def generate_response(complaint: str, retrieved_chunks: list) -> str:
 
     models_to_try = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
-    for attempt in range(3):
-        for model_name in models_to_try:
+    for attempt in range(MAX_RETRY_CYCLES):
+        for model_name in MODELS_TO_TRY:
             try:
                 response = client.models.generate_content(
                     model=model_name,
@@ -43,7 +45,7 @@ def generate_response(complaint: str, retrieved_chunks: list) -> str:
             except Exception as e:
                 print(f"  {model_name} failed: {e}")
                 continue
-        time.sleep(10)
+        time.sleep(RETRY_WAIT_SECONDS)
 
     raise RuntimeError("All models failed after retries — check API status or your quota.")
 
