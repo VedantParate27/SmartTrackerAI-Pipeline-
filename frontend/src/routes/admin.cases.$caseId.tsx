@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
+import { approveComplaint, getComplaint } from '#/lib/api'
 import {
   Callout,
   ConfidenceMeter,
@@ -18,9 +19,7 @@ import {
 import {
   activeDraft,
   addComment,
-  approveAndSend,
   escalate,
-  findCase,
   isVisible,
   markDuplicate,
   overrideClassification,
@@ -46,7 +45,28 @@ export const Route = createFileRoute('/admin/cases/$caseId')({
 function CaseDetailPage() {
   const { caseId } = Route.useParams()
   const { session, now } = useAppState()
-  const item = findCase(caseId)
+  const [item, setItem] = useState<Complaint | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+
+    getComplaint(caseId)
+      .then((complaint) => {
+        setItem(complaint)
+      })
+      .catch((error) => {
+        console.error('Failed to load complaint:', error)
+        setItem(null)
+      })
+      .finally(() => {
+        setLoading(false)
+      })
+  }, [caseId])
+  
+  if (loading) {
+    return <p>Loading case...</p>
+  }
 
   if (!item) {
     return (
@@ -590,11 +610,20 @@ function DraftPanel({
         {canApprove ? (
           <form
             className="grid gap-2 border-t border-(--line) pt-4 sm:grid-cols-[1fr_auto] sm:items-end"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (dirty) saveDraftEdit(item.id, text)
-              approveAndSend(item.id, { text, nextStatus })
-            }}
+            onSubmit={async (event) => {
+  event.preventDefault()
+
+  try {
+    await approveComplaint(item.id, {
+      admin_id: 2,
+      final_response: text,
+    })
+
+    window.location.reload()
+  } catch (error) {
+    console.error('Failed to approve complaint:', error)
+  }
+}}
           >
             <div>
               <label className="label" htmlFor="next-status">

@@ -115,26 +115,33 @@ function SubmitPage() {
     setAttachments(accepted)
   }
 
-  function onSubmit(event: React.FormEvent) {
-    event.preventDefault()
-    const found = validate(values)
-    setErrors(found)
+async function onSubmit(event: React.FormEvent) {
+  event.preventDefault()
+  const found = validate(values)
+  setErrors(found)
 
-    if (Object.keys(found).length > 0) {
-      setFailedAttempts((count) => count + 1)
-      return
-    }
-
-    setSubmittedId(
-      submitComplaint({
-        requesterName: values.requesterName.trim(),
-        contact: values.contact.trim(),
-        text: values.text.trim(),
-        priority: values.priority,
-        attachments,
-      }),
-    )
+  if (Object.keys(found).length > 0) {
+    setFailedAttempts((count) => count + 1)
+    return
   }
+
+  try {
+    const complaint = await submitComplaint({
+      requesterName: values.requesterName.trim(),
+      contact: values.contact.trim(),
+      text: values.text.trim(),
+      priority: values.priority,
+      attachments,
+    })
+
+    setSubmittedId(complaint.id)
+  } catch (error) {
+    console.error('Failed to submit complaint:', error)
+    setErrors({
+      text: 'Unable to submit the complaint. Please try again.',
+    })
+  }
+}
 
   if (submittedId) {
     return (

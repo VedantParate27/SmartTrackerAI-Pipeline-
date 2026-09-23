@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { analyse } from './pipeline'
+import { createComplaint, processComplaint } from './api'
 import { POLICY_DOCUMENTS, SEED_CASES } from './seed'
 import { SESSIONS, canTransition } from './taxonomy'
 import type {
@@ -281,14 +282,6 @@ export function activeDraft(item: Complaint) {
  * Actions
  * ------------------------------------------------------------------ */
 
-function nextCaseId(cases: Complaint[]) {
-  const highest = cases.reduce((max, item) => {
-    const numeric = Number(item.id.split('-').pop())
-    return Number.isFinite(numeric) && numeric > max ? numeric : max
-  }, 0)
-  return `GRV-2026-${String(highest + 1).padStart(4, '0')}`
-}
-
 function touch(
   item: Complaint,
   at: string,
@@ -322,49 +315,22 @@ export interface SubmitInput {
 }
 
 /** UC-01 / FR-01 to FR-05. Returns the tracking id immediately. */
-export function submitComplaint(input: SubmitInput) {
-  const at = new Date().toISOString()
-  const id = nextCaseId(state.cases)
+export async function submitComplaint(input: SubmitInput): Promise<Complaint> {
+  const complaint = await createComplaint({
+    user_id: 1,
+    complaint_text: input.text,
+  })
 
-  const record: Complaint = {
-    id,
+  // Process the complaint through the real FastAPI + AI pipeline.
+  const processedComplaint = await processComplaint(complaint.id)
+
+  return {
+    ...processedComplaint,
     requesterName: input.requesterName,
     contact: input.contact,
-    channel: 'Web form',
-    language: 'English',
-    text: input.text,
-    attachments: input.attachments,
     priority: input.priority,
-    status: 'Submitted',
-    submittedAt: at,
-    updatedAt: at,
-    assignedDepartment: null,
-    classification: null,
-    entities: [],
-    evidence: [],
-    aiDraft: null,
-    editedDraft: null,
-    resolution: null,
-    closureReason: null,
-    duplicateOf: null,
-    comments: [],
-    audit: [
-      auditEvent(
-        at,
-        input.requesterName,
-        'Complaint submitted',
-        `Channel: web form; attachments: ${input.attachments.length}`,
-        1,
-      ),
-    ],
+    attachments: input.attachments,
   }
-
-  set((current) => ({ ...current, cases: [record, ...current.cases], now: at }))
-
-  // FR-05: acknowledge first, then run the pipeline asynchronously.
-  window.setTimeout(() => runAnalysis(id), 600)
-
-  return id
 }
 
 /** UC-02. Runs the simulated pipeline and parks the case for a human. */

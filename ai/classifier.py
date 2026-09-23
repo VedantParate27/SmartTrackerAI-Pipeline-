@@ -29,8 +29,50 @@ Output:"""
 
 def classify_complaint(text: str) -> dict:
     prompt = CLASSIFY_PROMPT.format(text=text)
-    raw = call_gemini_with_retry(prompt)
-    return json.loads(strip_json_fences(raw))
+
+    for model_name in MODELS_TO_TRY:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=Classification,
+                    temperature=0,
+                ),
+            )
+
+            if response.parsed is None:
+                raise RuntimeError(
+                    f"{model_name} returned no structured response"
+                )
+
+            return response.parsed.model_dump()
+
+        except Exception as e:
+            error_text = str(e)
+
+            print(f"  {model_name} failed: {error_text}")
+
+            # Do not repeatedly hammer Gemini when the API says
+            # the quota/rate limit has been exhausted.
+            if (
+                "429" in error_text
+                or "RESOURCE_EXHAUSTED" in error_text
+                or "quota" in error_text.lower()
+                or "rate limit" in error_text.lower()
+            ):
+                raise RuntimeError(
+                    f"Gemini quota/rate limit exceeded for {model_name}. "
+                    "Please wait for the quota window to reset."
+                ) from e
+
+            # For other errors, try the next configured model.
+            continue
+
+    raise RuntimeError(
+        "All configured Gemini models failed. Check API status or configuration."
+    )
 
 
 if __name__ == "__main__":

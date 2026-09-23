@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Callout, EmptyState, StatusPill } from '#/components/ui'
 import { ageInHours, formatAge, percent } from '#/lib/format'
+import { getAdminQueue } from '#/lib/api'
 import { isVisible, useAppState } from '#/lib/store'
 import { CONFIG, DEPARTMENTS, PRIORITIES, STATUSES } from '#/lib/taxonomy'
 import type { Complaint } from '#/lib/types'
@@ -28,7 +29,57 @@ function summary(item: Complaint) {
 }
 
 function QueuePage() {
-  const { cases, session, now } = useAppState()
+  const { session, now } = useAppState()
+  const [backendCases, setBackendCases] = useState<Complaint[]>([])
+
+    useEffect(() => {
+    getAdminQueue()
+      .then((items) => {
+        const mapped: Complaint[] = items.map((item) => ({
+          id: String(item.id),
+          requesterName: `User ${item.user_id}`,
+          contact: '',
+          channel: 'Web',
+          language: 'English',
+          text: item.complaint_text,
+          attachments: [],
+          priority: 'Medium',
+          status:
+            item.status === 'awaiting_review'
+              ? 'Pending Review'
+              : 'Submitted',
+          submittedAt: item.created_at,
+          updatedAt: item.updated_at,
+          assignedDepartment: item.department,
+          classification: item.category
+            ? {
+                intent: item.category,
+                department: item.department ?? 'other',
+                confidence: item.confidence_score ?? 0,
+                alternatives: [],
+                modelVersion: 'Gemini',
+                taxonomyVersion: 'Phase 2',
+                ruleApplied: null,
+                overriddenBy: null,
+              }
+            : null,
+          entities: [],
+          evidence: [],
+          aiDraft: null,
+          editedDraft: null,
+          resolution: null,
+          closureReason: null,
+          duplicateOf: null,
+          comments: [],
+          audit: [],
+        }))
+
+        setBackendCases(mapped)
+      })
+      .catch((error) => {
+        console.error('Failed to load admin queue:', error)
+      })
+  }, [])
 
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('any')
@@ -39,8 +90,8 @@ function QueuePage() {
     useState<(typeof CONFIDENCE_OPTIONS)[number]['value']>('any')
 
   const permitted = useMemo(
-    () => cases.filter((item) => isVisible(item, session)),
-    [cases, session],
+  () => backendCases.filter((item) => isVisible(item, session)),
+  [backendCases, session],
   )
 
   const stats = useMemo(

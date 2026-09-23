@@ -1,28 +1,36 @@
 """
-Real AI pipeline, replacing the old placeholder. Routes in main.py are
-unchanged - they still call classify_and_extract(), generate_draft_response(),
-and entities_to_json() exactly as before. This file just adapts those calls
-onto the real RAG engine in ../ai/.
+Adapter between the existing FastAPI routes and the Phase 2 AI engine.
+
+The backend routes keep their existing function interface:
+classify_and_extract(), generate_draft_response(), entities_to_json()
+
+The actual AI work is performed by ai/src/.
 """
+
 import json
 import sys
 from pathlib import Path
 
-# Make the sibling ai/ package importable (backend/ and ai/ are sibling
-# folders under the project root).
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Phase 2 AI files use local imports such as "from config import ...".
+# Adding ai/src to sys.path lets those modules work when called by FastAPI.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+AI_SRC = PROJECT_ROOT / "ai" / "src"
 
-from ai.classifier import classify_complaint
-from ai.retrieval import hybrid_search
-from ai.generator import generate_response
+if str(AI_SRC) not in sys.path:
+    sys.path.insert(0, str(AI_SRC))
+
+from classifier import classify_complaint
+from retrieval import hybrid_search, rerank
+from generator import generate_response
 
 
 def classify_and_extract(complaint_text: str) -> dict:
     """
-    Returns: category (str), department (str), confidence_score (float 0-1),
-    extracted_entities (dict). Matches the columns in schema.sql.
+    Run Phase 2 classification while preserving the backend's
+    existing return format.
     """
     result = classify_complaint(complaint_text)
+
     return {
         "category": result["category"],
         "department": result["department"],
@@ -31,15 +39,34 @@ def classify_and_extract(complaint_text: str) -> dict:
     }
 
 
-def generate_draft_response(complaint_text: str, entities: dict, department: str) -> str:
+def generate_draft_response(
+    complaint_text: str,
+    entities: dict,
+    department: str
+) -> str:
     """
-    Runs hybrid retrieval against the department's policy chunks in ChromaDB,
-    then generates a grounded, cited draft response with Gemini.
+    Run Phase 2 retrieval, reranking and grounded response generation.
 
-    department comes from the classify_and_extract() call the route already
-    made - passing it in avoids re-classifying the same text twice.
+    The entities argument is retained for compatibility with the
+    existing backend route.
     """
-    chunks = hybrid_search(complaint_text, department)
+    candidates = hybrid_search(
+        complaint_text,
+        department,
+        top_k=10
+    )
+
+    ranked_chunks = rerank(
+        complaint_text,
+        candidates,
+        top_k=3
+    )
+
+    chunks = [
+        (doc, meta)
+        for doc, meta, _score in ranked_chunks
+    ]
+
     return generate_response(complaint_text, chunks)
 
 

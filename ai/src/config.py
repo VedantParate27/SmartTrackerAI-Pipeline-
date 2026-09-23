@@ -22,7 +22,9 @@ RRF_K_CONSTANT = 60              # standard RRF damping constant
 
 # --- Paths ---
 import os
-PROJECT_ROOT = r"C:\Users\SwakeetMali\smarttracker-ai"
+PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
 ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 CHROMA_DB_PATH = os.path.join(PROJECT_ROOT, "chroma_db")
 POLICIES_FOLDER = os.path.join(PROJECT_ROOT, "data", "policies")

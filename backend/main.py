@@ -6,13 +6,22 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
 from db import get_conn
 from ai_pipeline import classify_and_extract, generate_draft_response, entities_to_json
 
 app = FastAPI(title="SmartTracker AI")
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------- request/response models ----------
 
@@ -28,6 +37,7 @@ class ComplaintOut(BaseModel):
     category: Optional[str]
     department: Optional[str]
     confidence_score: Optional[float]
+    ai_draft_response: Optional[str]
     extracted_entities: Optional[str]
     status: str
     created_at: str
@@ -109,17 +119,33 @@ def get_complaint(complaint_id: int, conn=Depends(get_conn)):
     return _get_complaint_row(conn, complaint_id)
 
 
+def _get_complaint_row(conn, complaint_id: int) -> dict:
+    row = conn.execute(
+        """SELECT c.*, r.ai_draft_response
+           FROM complaints c
+           LEFT JOIN responses r ON r.complaint_id = c.id
+           WHERE c.id = ?""",
+        (complaint_id,),
+    ).fetchone()
+
+    if not row:
+        raise HTTPException(404, "complaint not found")
+
+    return dict(row)
+
+
 # ---------- admin: review queue ----------
 
 @app.get("/admin/queue")
 def admin_queue(conn=Depends(get_conn)):
     rows = conn.execute(
-        """SELECT c.id, c.complaint_text, c.category, c.department,
-                  c.confidence_score, c.extracted_entities, r.ai_draft_response
-           FROM complaints c
-           JOIN responses r ON r.complaint_id = c.id
-           WHERE c.status = 'awaiting_review'
-           ORDER BY c.created_at"""
+    """SELECT c.id, c.user_id, c.complaint_text, c.category, c.department,
+              c.confidence_score, c.extracted_entities, c.status,
+              c.created_at, c.updated_at, r.ai_draft_response
+       FROM complaints c
+       JOIN responses r ON r.complaint_id = c.id
+       WHERE c.status = 'awaiting_review'
+       ORDER BY c.created_at"""
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -155,9 +181,12 @@ def approve_response(complaint_id: int, payload: ApprovalIn, conn=Depends(get_co
 
 # ---------- helper ----------
 
-def _get_complaint_row(conn, complaint_id: int) -> dict:
     row = conn.execute(
-        "SELECT * FROM complaints WHERE id = ?", (complaint_id,)
+        """SELECT c.*, r.ai_draft_response
+           FROM complaints c
+           LEFT JOIN responses r ON r.complaint_id = c.id
+           WHERE c.id = ?""",
+        (complaint_id,),
     ).fetchone()
     if not row:
         raise HTTPException(404, "complaint not found")

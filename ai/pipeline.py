@@ -1,45 +1,74 @@
-from .classifier import classify_complaint
-from .retrieval import hybrid_search
-from .generator import generate_response
+"""
+Adapter between the existing FastAPI routes and the Phase 2 AI engine.
+
+The backend routes keep their existing function interface:
+classify_and_extract(), generate_draft_response(), entities_to_json()
+
+The actual AI work is performed by ai/src/.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+# Phase 2 AI files use local imports such as "from config import ...".
+# Adding ai/src to sys.path lets those modules work when called by FastAPI.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+AI_SRC = PROJECT_ROOT / "ai" / "src"
+
+if str(AI_SRC) not in sys.path:
+    sys.path.insert(0, str(AI_SRC))
+
+from classifier import classify_complaint
+from retrieval import hybrid_search, rerank
+from generator import generate_response
 
 
-def process_complaint(text: str) -> dict:
+def classify_and_extract(complaint_text: str) -> dict:
     """
-    The single entry point for the AI module.
-
-    Input: raw complaint text (a string)
-    Output: a dictionary containing everything downstream systems need —
-            classification, routing info, sources used, and the draft reply.
+    Run Phase 2 classification while preserving the backend's
+    existing return format.
     """
-    classification = classify_complaint(text)
-    chunks = hybrid_search(text, classification["department"])
-    draft = generate_response(text, chunks)
+    result = classify_complaint(complaint_text)
 
     return {
-        "complaint_text": text,
-        "category": classification["category"],
-        "department": classification["department"],
-        "urgency": classification["urgency"],
-        "confidence": classification.get("confidence", 0.0),
-        "entities": classification["entities"],
-        "summary": classification["summary"],
-        "retrieved_sources": [meta["source"] for _, meta in chunks],
-        "draft_response": draft,
+        "category": result["category"],
+        "department": result["department"],
+        "confidence_score": result.get("confidence", 0.0),
+        "extracted_entities": result.get("entities", {}),
     }
 
 
-if __name__ == "__main__":
-    import json
+def generate_draft_response(
+    complaint_text: str,
+    entities: dict,
+    department: str
+) -> str:
+    """
+    Run Phase 2 retrieval, reranking and grounded response generation.
 
-    test_complaints = [
-        "my order hasn't arrived in 3 weeks, order ORD-1234",
-        "I was charged twice for my subscription this month",
-        "I can't log into my account, getting error E-402",
+    The entities argument is retained for compatibility with the
+    existing backend route.
+    """
+    candidates = hybrid_search(
+        complaint_text,
+        department,
+        top_k=10
+    )
+
+    ranked_chunks = rerank(
+        complaint_text,
+        candidates,
+        top_k=3
+    )
+
+    chunks = [
+        (doc, meta)
+        for doc, meta, _score in ranked_chunks
     ]
 
-    for complaint in test_complaints:
-        print(f"\n{'='*60}")
-        print(f"COMPLAINT: {complaint}")
-        print("=" * 60)
-        result = process_complaint(complaint)
-        print(json.dumps(result, indent=2))
+    return generate_response(complaint_text, chunks)
+
+
+def entities_to_json(entities: dict) -> str:
+    return json.dumps(entities)
