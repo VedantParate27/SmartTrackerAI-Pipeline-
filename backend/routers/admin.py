@@ -13,19 +13,20 @@ from sqlalchemy.orm import Session
 
 # Our own modules
 from database import get_db
-from models import Complaint, User, Response as ComplaintResponseModel
+from models import Complaint, User, Response as ComplaintResponseModel, CleanupTask, CleanupProof, utcnow
 from schemas import (
     AdminComplaintUpdateRequest, 
     AdminQueueItem, 
     ComplaintResponse,
     ApproveResponseRequest,
-    ApproveResponseResult
+    ApproveResponseResult,
+    AssignCleanerRequest,
+    AssignCleanerResponse,
+    VerifyProofRequest,
+    VerifyProofResult
 )
 
-# Reuse the existing JWT authentication dependency from complaints.py.
-# We do NOT duplicate any JWT / SECRET_KEY logic here — we just import the
-# function that already does it.
-from routers.complaints import get_current_user
+from routers.complaints import get_current_user, get_current_admin_user
 
 # ---------------------------------------------------------------------------
 # LIFECYCLE RULES
@@ -52,8 +53,6 @@ def validate_status_transition(current_status: str, next_status: str):
 # ---------------------------------------------------------------------------
 # ROUTER
 # ---------------------------------------------------------------------------
-# prefix="/admin" → every route below starts with /admin
-# tags=["admin"]  → shown as a separate group on the /docs page
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
@@ -67,36 +66,15 @@ router = APIRouter(prefix="/admin", tags=["admin"])
     summary="[Admin] List all complaints in the system",
 )
 def get_all_complaints(
-    db: Session = Depends(get_db),                   # database session
-    current_user: User = Depends(get_current_user),  # the logged-in user
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
 ):
-    """
-    Return every complaint in the system, ordered newest first.
-
-    - Only accessible to users with role **"admin"**.
-    - Non-admin users receive **HTTP 403 Forbidden**.
-
-    Requires a valid **JWT Bearer token** in the Authorization header.
-    """
-
-    # Step 1 — Check the role.
-    # current_user is already verified (valid JWT, real user in the DB).
-    # We additionally require the role to be exactly "admin".
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required.",
-        )
-
-    # Step 2 — Fetch all complaints, newest first.
-    # No user_id filter here — admins see everything.
+    """Return every complaint in the system, ordered newest first."""
     complaints = (
         db.query(Complaint)
-        .order_by(Complaint.created_at.desc())   # newest complaint at the top
+        .order_by(Complaint.created_at.desc())
         .all()
     )
-
-    # Step 3 — Return the list (may be empty if no complaints exist yet).
     return complaints
 
 
@@ -110,36 +88,12 @@ def get_all_complaints(
     summary="[Admin] Update status, priority, or department of a complaint",
 )
 def update_complaint(
-    complaint_id: int,                                    # path parameter — the DB row ID
-    body: AdminComplaintUpdateRequest,                    # validated request body
-    db: Session = Depends(get_db),                        # database session
-    current_user: User = Depends(get_current_user),       # the logged-in user
+    complaint_id: int,
+    body: AdminComplaintUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
 ):
-    """
-    Update one or more of a complaint's administrative fields.
-
-    Updatable fields (all optional — supply only what you want to change):
-    - **status** — e.g. `"in_progress"`, `"resolved"`, `"closed"`
-    - **priority** — e.g. `"low"`, `"medium"`, `"high"`, `"urgent"`
-    - **department** — e.g. `"Public Works"`, `"Health"`, `"Finance"`
-
-    At least one field must be provided. Omitted fields are left unchanged.
-
-    - Only accessible to users with role **"admin"**.
-    - Non-admin users receive **HTTP 403 Forbidden**.
-    - Returns **HTTP 404** if no complaint with the given ID exists.
-
-    Requires a valid **JWT Bearer token** in the Authorization header.
-    """
-
-    # Step 1 — Check the role.
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required.",
-        )
-
-    # Step 2 — Find the complaint by its database ID.
+    """Update one or more of a complaint's administrative fields."""
     complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
     if complaint is None:
         raise HTTPException(
@@ -147,9 +101,6 @@ def update_complaint(
             detail="Complaint not found.",
         )
 
-    # Step 3 — Apply only the fields the admin actually sent.
-    # body.status is None when the admin did not include that field in the JSON.
-    # We skip None values so we never accidentally overwrite a field with None.
     if body.status is not None:
         validate_status_transition(complaint.status, body.status)
         complaint.status = body.status
@@ -160,10 +111,11 @@ def update_complaint(
     if body.department is not None:
         complaint.department = body.department
 
-    # Step 4 — Save the changes cleanly.
     try:
         db.commit()
         db.refresh(complaint)
+    except HTTPException:
+        raise
     except Exception:
         db.rollback()
         raise HTTPException(
@@ -171,7 +123,6 @@ def update_complaint(
             detail="Failed to update complaint.",
         )
 
-    # Step 5 — Return the updated complaint.
     return complaint
 
 
@@ -185,48 +136,45 @@ def update_complaint(
     summary="[Admin] List complaints in the admin queue (frontend-compatible shape)",
 )
 def get_admin_queue(
-    db: Session = Depends(get_db),                   # database session
-    current_user: User = Depends(get_current_user),  # the logged-in user
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
 ):
-    """
-    Return every complaint in the system ordered newest first, serialised into
-    the **AdminQueueItem** shape that maps database column names to the field
-    names expected by the frontend admin queue component.
-
-    Key differences from GET /admin/complaints:
-    - `tracking_id` is exposed as **`id`**
-    - `name` is exposed as **`requester_name`**
-    - `email` is exposed as **`contact`**
-    - `complaint_text` is exposed as **`text`**
-    - `created_at` is exposed as **`submitted_at`**
-    - `department` is exposed as **`assigned_department`**
-    - `priority` is **title-cased** ("medium" → "Medium")
-    - AI fields not yet in the database are returned as `null` / `[]`
-
-    - Only accessible to users with role **"admin"**.
-    - Non-admin users receive **HTTP 403 Forbidden**.
-
-    Requires a valid **JWT Bearer token** in the Authorization header.
-    """
-
-    # Step 1 — Check the role.
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required.",
-        )
-
-    # Step 2 — Fetch all complaints, newest first.
+    """Return every complaint in the system ordered newest first."""
     complaints = (
         db.query(Complaint)
         .order_by(Complaint.created_at.desc())
         .all()
     )
-
-    # Step 3 — Return the list.
-    # FastAPI serialises each Complaint ORM object through AdminQueueItem.
-    # Pydantic's alias support maps DB column names to frontend field names.
     return complaints
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/queue/{tracking_id}
+# ---------------------------------------------------------------------------
+@router.get(
+    "/queue/{tracking_id}",
+    response_model=AdminQueueItem,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Get a single complaint queue item by tracking ID",
+)
+def get_admin_queue_item(
+    tracking_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Return a single complaint queue item matching tracking ID."""
+    complaint = (
+        db.query(Complaint)
+        .filter(Complaint.tracking_id == tracking_id)
+        .first()
+    )
+    if complaint is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Complaint not found in admin queue.",
+        )
+    return complaint
+
 
 # ---------------------------------------------------------------------------
 # POST /admin/responses/{id}/approve
@@ -241,28 +189,17 @@ def approve_response(
     id: str,
     request: ApproveResponseRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
-    """
-    Approve a response for a specific complaint.
-    
-    Requires:
-    - JWT Bearer token
-    - Admin role
-    - A valid tracking_id for the complaint
-    """
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required.",
-        )
-
+    """Approve a response for a specific complaint."""
     complaint = db.query(Complaint).filter(Complaint.tracking_id == id).first()
     if not complaint:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Complaint not found.",
         )
+
+    validate_status_transition(complaint.status, request.next_status)
 
     try:
         new_response = ComplaintResponseModel(
@@ -272,14 +209,12 @@ def approve_response(
         )
         db.add(new_response)
         
-        validate_status_transition(complaint.status, request.next_status)
         complaint.status = request.next_status
         
         db.commit()
         db.refresh(new_response)
         db.refresh(complaint)
         
-        # Make sure datetime is converted to ISO string
         approved_at_str = (
             new_response.approved_at.isoformat() 
             if hasattr(new_response.approved_at, "isoformat") 
@@ -293,9 +228,160 @@ def approve_response(
             approved_at=approved_at_str,
             status=complaint.status
         )
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database commit failed."
         )
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/complaints/{complaint_id}/assign
+# ---------------------------------------------------------------------------
+@router.post(
+    "/complaints/{complaint_id}/assign",
+    response_model=AssignCleanerResponse,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Assign a complaint to a cleaner",
+)
+def assign_cleaner(
+    complaint_id: int,
+    body: AssignCleanerRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Assign a complaint to a cleaner and set complaint status to in_progress."""
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    if not complaint:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Complaint not found.",
+        )
+
+    cleaner = db.query(User).filter(User.id == body.cleaner_id).first()
+    if not cleaner or cleaner.role != "cleaner":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only users with role 'cleaner' can be assigned to cleanup tasks.",
+        )
+
+
+    task = db.query(CleanupTask).filter(CleanupTask.complaint_id == complaint.id).first()
+    if not task:
+        task = CleanupTask(
+            complaint_id=complaint.id,
+            assigned_cleaner_id=cleaner.id,
+            status="assigned",
+            notes=body.notes,
+        )
+        db.add(task)
+    else:
+        task.assigned_cleaner_id = cleaner.id
+        task.status = "assigned"
+        if body.notes is not None:
+            task.notes = body.notes
+
+    if complaint.status != "in_progress":
+        validate_status_transition(complaint.status, "in_progress")
+        complaint.status = "in_progress"
+
+    try:
+        db.commit()
+        db.refresh(task)
+        db.refresh(complaint)
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to assign cleaner.",
+        )
+
+    assigned_at_str = (
+        task.assigned_at.isoformat()
+        if hasattr(task.assigned_at, "isoformat")
+        else str(task.assigned_at)
+    )
+
+    return AssignCleanerResponse(
+        task_id=task.task_id,
+        tracking_id=complaint.tracking_id,
+        assigned_cleaner_id=cleaner.id,
+        cleaner_name=cleaner.name,
+        status=task.status,
+        assigned_at=assigned_at_str,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/proofs/{proof_id}/verify
+# ---------------------------------------------------------------------------
+@router.post(
+    "/proofs/{proof_id}/verify",
+    response_model=VerifyProofResult,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Verify or reject a cleaner's submitted proof",
+)
+def verify_proof(
+    proof_id: int,
+    body: VerifyProofRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Verify or reject a submitted cleanup proof and update task/complaint status."""
+    proof = db.query(CleanupProof).filter(CleanupProof.id == proof_id).first()
+    if not proof:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proof not found.",
+        )
+
+    task = proof.task
+    complaint = task.complaint
+
+    now = utcnow()
+    proof.verified_by = current_user.id
+    proof.verified_at = now
+
+    if body.approved:
+        proof.verification_status = "verified"
+        task.status = "verified"
+        task.completed_at = now
+
+        next_comp_status = body.next_status or "resolved"
+        if complaint.status != next_comp_status:
+            validate_status_transition(complaint.status, next_comp_status)
+            complaint.status = next_comp_status
+    else:
+        proof.verification_status = "rejected"
+        proof.rejection_reason = body.rejection_reason
+        task.status = "rejected"
+
+    try:
+        db.commit()
+        db.refresh(proof)
+        db.refresh(task)
+        db.refresh(complaint)
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify proof.",
+        )
+
+    return VerifyProofResult(
+        proof_id=proof.id,
+        task_id=task.task_id,
+        tracking_id=complaint.tracking_id,
+        verification_status=proof.verification_status,
+        task_status=task.status,
+        complaint_status=complaint.status,
+        verified_at=now.isoformat(),
+    )
+

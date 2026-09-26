@@ -9,13 +9,14 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Column,         # used to define a table column
     Integer,        # whole numbers  (1, 2, 3 …)
+    Float,          # floating point numbers (lat/long)
     String,         # text / varchar
     Text,           # longer text (complaint body)
     DateTime,       # date + time values
     ForeignKey,     # links one table to another
-    Boolean,        # True / False  (reserved for future use)
+    Boolean,        # True / False
 )
-from sqlalchemy.orm import relationship  # defines the Python-level link between models
+from sqlalchemy.orm import relationship, backref  # defines the Python-level link between models
 
 from database import Base  # import the shared Base class from database.py
 
@@ -45,7 +46,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)  # we never store plain passwords!
 
     # --- Role & Department ---
-    role = Column(String(50), nullable=False, default="citizen")
+    role = Column(String(50), nullable=False, default="citizen") # citizen, cleaner, staff, admin
     department = Column(String(100), nullable=True)  # optional; staff belong to a dept
 
     # --- Timestamp ---
@@ -93,17 +94,30 @@ class Complaint(Base):
     status = Column(String(30), nullable=False, default="pending")
     department = Column(String(100), nullable=True)
 
+    # --- Waste Management Fields ---
+    waste_type = Column(String(50), nullable=True)            # E-waste, Medical waste, Dry waste, Wet waste
+    waste_context = Column(Text, nullable=True)               # e.g. indoor vs outdoor, public accumulation
+    quantity_severity = Column(String(50), nullable=True)     # small, medium, large, hazardous
+    recommended_action = Column(Text, nullable=True)          # self disposal guidance or cleaner instructions
+    intervention_required = Column(Boolean, nullable=True, default=False)
+
+    # --- Location Fields (Member 4 Integration) ---
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    address_text = Column(String(255), nullable=True)
+
     # --- Timestamps ---
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
     # --- Relationship ---
     owner = relationship("User", back_populates="complaints")
+    cleanup_task = relationship("CleanupTask", back_populates="complaint", uselist=False)
 
     @property
     def resolution(self):
         """Expose the latest approved response formatted for frontend resolution property."""
-        if self.responses:
+        if hasattr(self, "responses") and self.responses:
             latest = self.responses[-1]
             approver_name = latest.approver.name if latest.approver else "Admin"
             approved_at_str = (
@@ -157,8 +171,62 @@ class Response(Base):
     approved_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     # Relationships
-    complaint = relationship("Complaint", backref="responses")
+    complaint = relationship("Complaint", backref=backref("responses", order_by="Response.approved_at"))
     approver = relationship("User")
 
     def __repr__(self):
         return f"<Response id={self.id} complaint_id={self.complaint_id}>"
+
+
+# ---------------------------------------------------------------------------
+# MODEL 5 — CleanupTask
+# ---------------------------------------------------------------------------
+class CleanupTask(Base):
+    __tablename__ = "cleanup_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(
+        String(50),
+        unique=True,
+        nullable=False,
+        index=True,
+        default=lambda: f"TSK-{uuid.uuid4().hex[:8]}"
+    )
+    complaint_id = Column(Integer, ForeignKey("complaints.id"), unique=True, nullable=False, index=True)
+    assigned_cleaner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    status = Column(String(30), nullable=False, default="assigned")  # assigned, in_progress, proof_submitted, verified, rejected
+    assigned_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    complaint = relationship("Complaint", back_populates="cleanup_task")
+    cleaner = relationship("User")
+    proofs = relationship("CleanupProof", back_populates="task", order_by="CleanupProof.uploaded_at")
+
+    def __repr__(self):
+        return f"<CleanupTask id={self.id} task_id={self.task_id!r} status={self.status!r}>"
+
+
+# ---------------------------------------------------------------------------
+# MODEL 6 — CleanupProof
+# ---------------------------------------------------------------------------
+class CleanupProof(Base):
+    __tablename__ = "cleanup_proofs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("cleanup_tasks.id"), nullable=False, index=True)
+    image_url = Column(String(500), nullable=False)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    uploaded_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    verification_status = Column(String(30), nullable=False, default="pending_verification") # pending_verification, verified, rejected
+    verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+
+    task = relationship("CleanupTask", back_populates="proofs")
+    uploader = relationship("User", foreign_keys=[uploaded_by])
+    verifier = relationship("User", foreign_keys=[verified_by])
+
+    def __repr__(self):
+        return f"<CleanupProof id={self.id} task_id={self.task_id} status={self.verification_status!r}>"
+

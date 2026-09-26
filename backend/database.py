@@ -5,19 +5,12 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # ---------------------------------------------------------------------------
 # 1. DATABASE URL
 # ---------------------------------------------------------------------------
-# SQLite stores the entire database in a single file called "smarttracker.db".
-# This file will be created automatically in the same folder as this script
-# when the app runs for the first time.
-#
-# The default absolute path keeps the same database when Uvicorn is launched
-# from either the repository root or backend/. Tests and deployments can
-# override it with SMARTTRACKER_DATABASE_URL.
 DEFAULT_DATABASE_PATH = Path(__file__).resolve().with_name("smarttracker.db")
 DATABASE_URL = os.getenv(
     "SMARTTRACKER_DATABASE_URL",
@@ -27,13 +20,6 @@ DATABASE_URL = os.getenv(
 # ---------------------------------------------------------------------------
 # 2. ENGINE
 # ---------------------------------------------------------------------------
-# The engine is the core interface between SQLAlchemy and the database.
-# It manages the actual connection to the database file.
-#
-# connect_args={"check_same_thread": False}
-#   → This is required ONLY for SQLite.
-#   → By default, SQLite only allows one thread to use a connection at a time.
-#   → FastAPI can use multiple threads, so we disable that restriction here.
 engine_options = {}
 if DATABASE_URL.startswith("sqlite"):
     engine_options["connect_args"] = {"check_same_thread": False}
@@ -43,14 +29,6 @@ engine = create_engine(DATABASE_URL, **engine_options)
 # ---------------------------------------------------------------------------
 # 3. SESSION FACTORY
 # ---------------------------------------------------------------------------
-# A "session" is like a temporary workspace where you build up a set of
-# database operations (inserts, updates, queries) and then commit them all
-# at once, or roll them back if something goes wrong.
-#
-# SessionLocal is a factory (a blueprint) for creating new session objects.
-#   - autocommit=False → we manually control when changes are saved
-#   - autoflush=False  → changes aren't automatically written before queries
-#   - bind=engine      → connects sessions to our SQLite database
 SessionLocal = sessionmaker(
     autocommit=False,   # manually control when changes are saved (safer)
     autoflush=False,
@@ -60,29 +38,55 @@ SessionLocal = sessionmaker(
 # ---------------------------------------------------------------------------
 # 4. DECLARATIVE BASE
 # ---------------------------------------------------------------------------
-# Base is the parent class that all database models will inherit from.
-# When you create a model like "class User(Base)", SQLAlchemy knows it
-# represents a table in the database.
 Base = declarative_base()
 
+
 # ---------------------------------------------------------------------------
-# 5. DEPENDENCY — get_db()
+# 5. IDEMPOTENT MIGRATION HELPER
 # ---------------------------------------------------------------------------
-# This is a FastAPI "dependency" function used in API route functions.
-# It opens a database session, provides it to the route, and ensures the
-# session is properly closed afterward — even if an error occurs.
-#
-# Usage in a route:
-#   from database import get_db
-#   from sqlalchemy.orm import Session
-#   from fastapi import Depends
-#
-#   @app.get("/example")
-#   def example(db: Session = Depends(get_db)):
-#       ...
+def run_migrations(target_engine=None):
+    """
+    Idempotent schema migration for SQLite databases.
+    Ensures missing columns and new tables are safely added to existing database files
+    without dropping or modifying existing data.
+    """
+    if target_engine is None:
+        target_engine = engine
+
+    # Ensure all declared tables exist
+    Base.metadata.create_all(bind=target_engine)
+
+    from models import Complaint
+    from sqlalchemy import Boolean, DateTime, String
+
+    inspector = inspect(target_engine)
+    if "complaints" in inspector.get_table_names():
+        existing_columns = {col["name"] for col in inspector.get_columns("complaints")}
+
+        for column in Complaint.__table__.columns:
+            if column.name not in existing_columns:
+                col_type = str(column.type)
+                if isinstance(column.type, Boolean):
+                    col_type = "BOOLEAN DEFAULT 0"
+                elif isinstance(column.type, DateTime):
+                    col_type = "DATETIME"
+                elif isinstance(column.type, String) and column.type.length:
+                    col_type = f"VARCHAR({column.type.length})"
+
+                with target_engine.begin() as connection:
+                    connection.execute(
+                        text(f"ALTER TABLE complaints ADD COLUMN {column.name} {col_type}")
+                    )
+
+
+
+# ---------------------------------------------------------------------------
+# 6. DEPENDENCY — get_db()
+# ---------------------------------------------------------------------------
 def get_db():
     db = SessionLocal()   # open a new session
     try:
         yield db          # hand the session to the route function
     finally:
         db.close()        # always close the session when done
+

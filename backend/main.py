@@ -3,21 +3,21 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # ---------------------------------------------------------------------------
 # Database imports
 # ---------------------------------------------------------------------------
-from database import Base, engine
-from models import AppStateSnapshot, Complaint, User, Response  # noqa: F401
+from database import Base, engine, run_migrations
+from models import AppStateSnapshot, Complaint, User, Response, CleanupTask, CleanupProof  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Router imports
 # ---------------------------------------------------------------------------
-# Each router file groups related endpoints together.
-# We import the router object and register it with the main app below.
 from routers import auth as auth_router
 from routers import complaints as complaints_router
 from routers import admin as admin_router
+from routers import cleaner as cleaner_router
 from routers import app_state as app_state_router
 
 
@@ -28,8 +28,8 @@ from routers import app_state as app_state_router
 async def lifespan(app: FastAPI):
     # --- STARTUP ---
     print("Starting up SmartTracker AI …")
-    Base.metadata.create_all(bind=engine)
-    print("Database tables ready.")
+    run_migrations(engine)
+    print("Database tables & migrations ready.")
 
     yield  # app is now running and serving requests
 
@@ -44,6 +44,17 @@ app = FastAPI(
     title="SmartTracker AI Backend",
     lifespan=lifespan,
 )
+
+# ---------------------------------------------------------------------------
+# Static files for proof images
+# SECURITY NOTE (MVP): Uploaded proof photos are stored with UUID filenames
+# (proof_<uuid>.jpg) and served publicly at /uploads/{filename} so frontend
+# <img> tags can render proof preview images directly without authenticated blob streaming.
+# ---------------------------------------------------------------------------
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
 
 # The Vite app and FastAPI normally run on different ports in development.
 # Keep the allow-list configurable for deployed environments while making the
@@ -72,6 +83,7 @@ app.add_middleware(
 app.include_router(auth_router.router)
 app.include_router(complaints_router.router)
 app.include_router(admin_router.router)
+app.include_router(cleaner_router.router)
 app.include_router(app_state_router.router)
 
 
@@ -87,4 +99,5 @@ def home():
 def health():
     """Small readiness endpoint used by local tooling and deployments."""
     return {"status": "ok"}
+
 
