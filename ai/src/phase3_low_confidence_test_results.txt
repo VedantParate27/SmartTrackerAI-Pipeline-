@@ -1,0 +1,64 @@
+
+======================================================================
+CASE 1/7: not sure if this is a billing thing or a delivery thing but something's wrong with my last order
+======================================================================
+confidence: 0.5
+needs_human_review: True
+review_reasons: ['low_classification_confidence: 0.50 (threshold: 0.6)', 'low_retrieval_relevance: top match score 0.000023 (threshold: 0.0005)']
+
+======================================================================
+CASE 2/7: My refund arrived but I never asked for one and also I love your service but I want to cancel everything
+======================================================================
+confidence: 0.8
+needs_human_review: False
+review_reasons: []
+
+======================================================================
+CASE 3/7: refund??
+======================================================================
+confidence: 0.5
+needs_human_review: True
+review_reasons: ['low_classification_confidence: 0.50 (threshold: 0.6)']
+
+======================================================================
+CASE 4/7: this is either a bug or I'm just confused, not sure which
+======================================================================
+confidence: 0.4
+needs_human_review: True
+review_reasons: ['low_classification_confidence: 0.40 (threshold: 0.6)', 'low_retrieval_relevance: top match score 0.000013 (threshold: 0.0005)']
+
+======================================================================
+CASE 5/7: something happened with my account, don't know if it's serious or not
+======================================================================
+confidence: 0.5
+needs_human_review: True
+review_reasons: ['low_classification_confidence: 0.50 (threshold: 0.6)', 'low_retrieval_relevance: top match score 0.000022 (threshold: 0.0005)']
+
+======================================================================
+CASE 6/7: half the time it works, half the time it doesn't, not sure if that's a big deal
+======================================================================
+confidence: 0.8
+needs_human_review: True
+review_reasons: ['low_retrieval_relevance: top match score 0.000022 (threshold: 0.0005)']
+
+======================================================================
+CASE 7/7: I have a question that's kind of about billing but also kind of not
+======================================================================
+confidence: 0.3
+needs_human_review: True
+review_reasons: ['low_classification_confidence: 0.30 (threshold: 0.6)', 'low_retrieval_relevance: top match score 0.000265 (threshold: 0.0005)']
+
+
+======================================================================
+LOW-CONFIDENCE TEST SUMMARY
+======================================================================
+Correctly flagged as low-confidence: 5/7 (71.4%)
+
+Note: a case NOT being flagged doesn't necessarily mean failure —
+it may mean the model found a genuinely confident, correct reading
+of a case we assumed was ambiguous. Review each case's actual
+classification before concluding this is a false negative.
+
+NOT flagged: "My refund arrived but I never asked for one and also I love your service but I want to cancel everything" (confidence: 0.8)
+
+NOT flagged: "half the time it works, half the time it doesn't, not sure if that's a big deal" (confidence: 0.8)

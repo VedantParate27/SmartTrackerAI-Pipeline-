@@ -1,0 +1,20 @@
+Case 1/13: PASS — expected '14 business days'
+Case 2/13: PASS — expected 'duplicate charge'
+Case 3/13: PASS — expected 'password reset'
+Case 4/13: PASS — expected 'GDPR'
+Case 5/13: PASS — expected 'signup record'
+Case 6/13: PASS — expected 'account takeover'
+Case 7/13: PASS — expected 'shipped'
+Case 8/13: PASS — expected '48 hours'
+Case 9/13: PASS — expected 'crash'
+Case 10/13: PASS — expected 'promotional'
+Case 11/13: PASS — expected 'payment method'
+Case 12/13: PASS — expected 'acknowledged within 24 hours'
+Case 13/13: PASS — expected 'billing cycle'
+
+============================================================
+RETRIEVAL EVALUATION SUMMARY
+============================================================
+Retrieval accuracy: 13/13 (100.0%)
+
+No failures — retrieval found the expected fact in every case.

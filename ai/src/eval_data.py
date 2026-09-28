@@ -81,7 +81,7 @@ TEST_CASES = [
         "text": "Getting a 500 Internal Server Error on checkout page, tried 3 times",
         "expected_category": "technical",
         "expected_department": "tech_support",
-        "expected_urgency": "medium",
+        "expected_urgency": "high",
     },
     {
         "text": "order not come yet very bad service want money back",
@@ -112,7 +112,7 @@ TEST_CASES = [
         "text": "why is my invoice showing $49.99 when I signed up for the $29.99 plan",
         "expected_category": "billing",
         "expected_department": "billing",
-        "expected_urgency": "medium",
+        "expected_urgency": "high",
     },
     {
         "text": "the app crashes every time I open the settings page, using iPhone 15",
@@ -131,5 +131,68 @@ TEST_CASES = [
         "expected_category": "account",
         "expected_department": "tech_support",  # was customer_service — corrected
         "expected_urgency": "high",
+    },
+    # --- Phase 3 additions: broader coverage ---
+    {
+        "text": "9999",
+        "expected_category": "other",
+        "expected_department": "customer_service",
+        "expected_urgency": None,
+        "known_ambiguous": True,  # pure number, no context — genuinely ambiguous
+    },
+    {
+        "text": "I want to speak to a manager RIGHT NOW about my order ORD-3321, this has gone on too long",
+        "expected_category": "delivery",
+        "expected_department": "logistics",
+        "expected_urgency": "high",
+    },
+    {
+        "text": "Quick question — do you offer student discounts?",
+        "expected_category": "other",
+        "expected_department": "customer_service",
+        "expected_urgency": "low",
+    },
+    {
+        "text": "My payment method was declined even though I have sufficient balance",
+        "expected_category": "billing",
+        "expected_department": "billing",
+        "expected_urgency": "medium",
+    },
+    {
+        "text": "The tracking page shows my order as delivered but I never received it",
+        "expected_category": "delivery",
+        "expected_department": "logistics",
+        "expected_urgency": "high",
+    },
+    {
+        "text": "I want to change my email address on file",
+        "expected_category": "account",
+        "expected_department": "customer_service",
+        "expected_urgency": "low",
+    },
+    {
+        "text": "Two-factor authentication code never arrives via SMS",
+        "expected_category": "technical",
+        "expected_department": "tech_support",
+        "expected_urgency": "medium",
+    },
+    {
+        "text": "I was charged in a different currency than expected and the conversion seems off",
+        "expected_category": "billing",
+        "expected_department": "billing",
+        "expected_urgency": "medium",
+    },
+    {
+        "text": "Please cancel my order ORD-8842 before it ships, I made a mistake",
+        "expected_category": "delivery",
+        "expected_department": "logistics",
+        "expected_urgency": "high",
+    },
+    {
+        "text": "how do i even use this site",
+        "expected_category": "other",
+        "expected_department": "customer_service",
+        "expected_urgency": "low",
+        "known_ambiguous": True,  # could reasonably be read as a technical/usability complaint instead
     },
 ]

@@ -1,0 +1,96 @@
+
+======================================================================
+CASE 1/7: do you guys support integrations with Slack for order notifications?
+======================================================================
+top_retrieval_score: 1.254877045017391e-05
+needs_human_review: True
+review_reasons: ['low_retrieval_relevance: top match score 0.000013 (threshold: 0.0005)']
+draft_response:
+Hello, 
+
+Thank you for reaching out to us. We understand you are inquiring about whether we support integrations with Slack for order notifications. 
+
+The provided information does not contain enough details to resolve your question regarding Slack integrations. Because of this, your case will be escalated for manual review so that we can get you the correct information.
+
+
+======================================================================
+CASE 2/7: can I pay in installments using Klarna?
+======================================================================
+top_retrieval_score: 1.2190641179175683e-05
+needs_human_review: True
+review_reasons: ['low_retrieval_relevance: top match score 0.000012 (threshold: 0.0005)']
+draft_response:
+The provided context does not contain enough information to answer your question about paying in installments using Klarna. I am escalating your case for manual review so our team can assist you further.
+
+
+======================================================================
+CASE 3/7: do you offer carbon-neutral shipping options?
+======================================================================
+top_retrieval_score: 1.1993212686994119e-05
+needs_human_review: True
+review_reasons: ['low_retrieval_relevance: top match score 0.000012 (threshold: 0.0005)']
+draft_response:
+I understand you are inquiring about our shipping options. 
+
+The provided policy documents do not contain information regarding carbon-neutral shipping options. Because the context does not contain enough information to answer your question, this case will be escalated for manual review.
+
+
+======================================================================
+CASE 4/7: is there a mobile app I can download for tracking?
+======================================================================
+top_retrieval_score: 1.3150050012118886e-05
+needs_human_review: True
+review_reasons: ['low_retrieval_relevance: top match score 0.000013 (threshold: 0.0005)']
+draft_response:
+I understand you are asking about whether there is a mobile app you can download for tracking. 
+
+The provided context does not contain enough information to resolve your question about a mobile app. Because of this, your case will be escalated for manual review.
+
+
+======================================================================
+CASE 5/7: can I get an invoice in a different language for tax purposes?
+======================================================================
+top_retrieval_score: 1.5928521716536357e-05
+needs_human_review: True
+review_reasons: ['low_retrieval_relevance: top match score 0.000016 (threshold: 0.0005)']
+draft_response:
+I understand you are looking to get an invoice in a different language for tax purposes. 
+
+The provided context does not contain enough information to resolve your request regarding invoices in different languages. Therefore, your case will be escalated for manual review.
+
+
+======================================================================
+CASE 6/7: do you support cryptocurrency payments?
+======================================================================
+top_retrieval_score: 1.2531334266132056e-05
+needs_human_review: True
+review_reasons: ['low_retrieval_relevance: top match score 0.000013 (threshold: 0.0005)']
+draft_response:
+Dear Customer,
+
+Thank you for contacting us. 
+
+The provided information does not contain enough details to resolve your inquiry about cryptocurrency payments. Therefore, your case will be escalated for manual review.
+
+
+======================================================================
+CASE 7/7: what's your policy on gift-wrapping orders?
+======================================================================
+top_retrieval_score: 2.8693758940190517e-05
+needs_human_review: True
+review_reasons: ['low_retrieval_relevance: top match score 0.000029 (threshold: 0.0005)']
+draft_response:
+I understand you are inquiring about our gift-wrapping policy. 
+
+The provided context does not contain enough information to answer your question regarding gift-wrapping orders. Because of this, your case will be escalated for manual review so that someone can assist you further.
+
+
+
+======================================================================
+NO-POLICY ESCALATION TEST SUMMARY
+======================================================================
+Correctly escalated (low relevance detected): 7/7 (100.0%)
+
+Manually verify each draft_response above does NOT confidently
+state a specific answer to the out-of-scope question — a low
+relevance score alone doesn't guarantee the generated text is safe.

@@ -56,4 +56,19 @@ RAG_TEST_CASES = [
         "department": "billing",
         "expected_keyword": "promotional",
     },
+        {
+        "text": "my payment was declined at checkout",
+        "department": "billing",
+        "expected_keyword": "payment method",
+    },
+    {
+        "text": "I need help updating my email address",
+        "department": "customer_service",
+        "expected_keyword": "acknowledged within 24 hours",
+    },
+    {
+        "text": "how long until my subscription cancellation takes effect",
+        "department": "billing",
+        "expected_keyword": "billing cycle",
+    },
 ]
