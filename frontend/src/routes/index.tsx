@@ -6,46 +6,51 @@ export const Route = createFileRoute('/')({ component: Home })
 const PIPELINE = [
   {
     step: '01',
-    title: 'Intake',
-    body: 'FastAPI stores the complaint and returns the tracking reference used everywhere else.',
+    title: 'Report',
+    body: 'A citizen describes the waste and, optionally, where it is. The backend returns a tracking reference.',
   },
   {
     step: '02',
-    title: 'Classify & route',
-    body: 'Category, entities, department and confidence appear only when backend processing returns them.',
+    title: 'AI triage',
+    body: 'An AI model suggests waste type, amount and whether a cleaner is needed — with a confidence score.',
   },
   {
     step: '03',
-    title: 'Retrieve policy',
-    body: 'Missing policy or retrieval results stay visibly unavailable instead of being filled in.',
+    title: 'Human decision',
+    body: 'Low confidence or hazardous waste is escalated. An admin accepts or corrects, then dispatches or sends guidance.',
   },
   {
     step: '04',
-    title: 'Draft with citations',
-    body: 'The UI accepts a backend draft or AI failure state and never assumes generation succeeded.',
+    title: 'Cleanup + proof',
+    body: 'The assigned cleaner uploads a photo of the cleaned spot. Rejected photos go back for another try.',
   },
   {
     step: '05',
-    title: 'Human approval',
-    body: 'An admin approves the reply through the backend, which stores it and returns the new status.',
+    title: 'Verified & measured',
+    body: 'An admin verifies the proof and the case closes. Every step lands in the event log for process mining.',
   },
 ]
 
 const ENTRIES = [
   {
     to: '/submit',
-    label: 'Submit a grievance',
-    body: 'One form. No department to choose.',
+    label: 'Report waste',
+    body: 'One form. Location and type are optional.',
   },
   {
     to: '/track',
-    label: 'Track a case',
-    body: 'Check status with your reference number.',
+    label: 'Track a complaint',
+    body: 'See status, and all your past reports.',
+  },
+  {
+    to: '/cleaner',
+    label: 'Cleaner tasks',
+    body: 'Assigned jobs and photo proof.',
   },
   {
     to: '/admin',
-    label: 'Review workspace',
-    body: 'Admin queue, drafts and approvals.',
+    label: 'Admin workspace',
+    body: 'AI review, dispatch and verification.',
   },
 ] as const
 
@@ -53,24 +58,24 @@ function Home() {
   return (
     <main id="main" className="wrap page">
       <section className="max-w-3xl">
-        <p className="kicker">Grievance routing &amp; resolution pipeline</p>
+        <p className="kicker">Waste complaint triage &amp; resolution</p>
         <h1 className="mt-2 text-3xl font-extrabold tracking-tight sm:text-4xl">
-          Describe the problem. We find the right desk and the right policy.
+          Report the mess. AI sorts it, a person decides, a cleaner proves it's
+          done.
         </h1>
         <p className="mt-3 text-base leading-relaxed muted sm:text-lg">
-          SmartTracker AI sends your complaint through the FastAPI request model
-          and displays the backend response without inventing fields.
-          Classification, evidence, and approved replies appear when the API
-          provides them.
+          SmartTracker AI routes every waste complaint through a
+          confidence-gated AI assistant and a human reviewer, then tracks the
+          cleanup to a verified photo.
         </p>
       </section>
 
       <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center">
         <Link to="/submit" className="btn btn-primary btn-block sm:w-auto">
-          Submit a grievance
+          Report waste
         </Link>
         <Link to="/track" className="btn btn-block sm:w-auto">
-          Track an existing case
+          Track a complaint
         </Link>
       </div>
 
@@ -82,7 +87,7 @@ function Home() {
         <h2 id="entries-heading" className="sr-only">
           Where to start
         </h2>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {ENTRIES.map((entry) => (
             <Link
               key={entry.to}
@@ -100,7 +105,7 @@ function Home() {
 
       <section className="mt-10" aria-labelledby="pipeline-heading">
         <h2 id="pipeline-heading" className="text-lg font-extrabold">
-          How a case moves
+          How a complaint moves
         </h2>
         <ol className="mt-4 grid list-none gap-3 p-0 md:grid-cols-5">
           {PIPELINE.map((item) => (
@@ -119,10 +124,10 @@ function Home() {
         </h2>
         <ul className="mt-3 grid list-none gap-2 p-0 text-sm muted sm:grid-cols-2">
           {[
-            'Send an AI-written response without a named human approver.',
-            'Show mock policy evidence when retrieval results are missing.',
-            'Hide a missing or low-confidence AI result behind a fake success state.',
-            'Give legal, medical or emergency advice, or make a final disciplinary decision.',
+            'Let the AI resolve or dispatch anything on its own.',
+            'Route hazardous or medical waste without a human check.',
+            'Close a cleanup without a verified photo.',
+            'Invent a prediction when the AI service has not sent one.',
           ].map((item) => (
             <li key={item} className="card card-pad flex gap-2">
               <span

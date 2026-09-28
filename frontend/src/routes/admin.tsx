@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute } from '@tanstack/react-router'
+import { Link, Outlet, createFileRoute } from '@tanstack/react-router'
 import AuthPanel from '#/components/AuthPanel'
 import { Callout } from '#/components/ui'
 import { signOut, useAuth } from '#/lib/auth'
@@ -16,14 +16,13 @@ function AdminLayout() {
           Review workspace
         </h1>
         <div className="mt-5">
-          <AuthPanel adminOnly />
+          <AuthPanel requireRole="admin" />
         </div>
         {session && session.role !== 'admin' ? (
           <div className="mt-4">
             <Callout tone="danger" title="Backend access denied">
-              Frontend role switching has been removed. Sign in with a real
-              backend admin account to access{' '}
-              <span className="mono">/admin</span> endpoints.
+              The backend only serves <span className="mono">/admin</span>{' '}
+              endpoints to accounts with the admin role. Sign in with one.
             </Callout>
           </div>
         ) : null}
@@ -49,6 +48,24 @@ function AdminLayout() {
           </button>
         </div>
       </div>
+
+      <nav aria-label="Administration" className="sub-nav mt-4">
+        <Link
+          to="/admin"
+          activeOptions={{ exact: true }}
+          className="nav-link shrink-0"
+          activeProps={{ className: 'nav-link is-active shrink-0' }}
+        >
+          Complaint queue
+        </Link>
+        <Link
+          to="/admin/events"
+          className="nav-link shrink-0"
+          activeProps={{ className: 'nav-link is-active shrink-0' }}
+        >
+          Event log &amp; exports
+        </Link>
+      </nav>
 
       <div className="mt-5">
         <Outlet />

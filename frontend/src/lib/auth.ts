@@ -118,6 +118,19 @@ function getSnapshot() {
   return state
 }
 
+/**
+ * What the server rendered: nobody is signed in, because the session lives in
+ * sessionStorage. React uses this for every component while it hydrates — even
+ * a lazy route that hydrates after hydrateAuth() has already restored the live
+ * session — and then re-renders with getSnapshot(). Returning the live state
+ * here made signed-in pages mismatch their server HTML.
+ */
+const SERVER_STATE: AuthState = { session: null, hydrated: false }
+
+function getServerSnapshot() {
+  return SERVER_STATE
+}
+
 export function useAuth() {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }
