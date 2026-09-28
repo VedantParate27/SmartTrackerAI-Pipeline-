@@ -2,6 +2,12 @@
 # This file defines the database tables for SmartTracker AI as Python classes.
 # Each class = one table in the database.
 # SQLAlchemy reads these classes and creates the actual tables when the app starts.
+#
+# Phase-3 (research layer) additions:
+#   * AIOutput      — advisory AI triage results pushed by the AI team (never fabricated here)
+#   * AICorrection  — admin corrections of AI predictions (human-in-the-loop evidence)
+#   * EventLog      — actor-attributed lifecycle event log (process-mining input)
+#   * Complaint     — new research/DWM columns (triage_mode, review flags, resolved_at, source)
 
 import uuid
 from datetime import datetime, timezone
@@ -74,7 +80,7 @@ class Complaint(Base):
         unique=True,
         nullable=False,
         index=True,
-        default=lambda: f"TRK-{uuid.uuid4().hex[:8]}"  # e.g. "TRK-a3f8b2c1"
+        default=lambda: f"TRK-{uuid.uuid4().hex[:8]}"
     )
 
     # --- Foreign Key (link to users table) ---
@@ -97,7 +103,7 @@ class Complaint(Base):
     # --- Waste Management Fields ---
     waste_type = Column(String(50), nullable=True)            # E-waste, Medical waste, Dry waste, Wet waste
     waste_context = Column(Text, nullable=True)               # e.g. indoor vs outdoor, public accumulation
-    quantity_severity = Column(String(50), nullable=True)     # small, medium, large, hazardous
+    quantity_severity = Column(String(50), nullable=True)     # small, medium, large
     recommended_action = Column(Text, nullable=True)          # self disposal guidance or cleaner instructions
     intervention_required = Column(Boolean, nullable=True, default=False)
 
@@ -106,13 +112,37 @@ class Complaint(Base):
     longitude = Column(Float, nullable=True)
     address_text = Column(String(255), nullable=True)
 
+    # --- Research / DWM fields (Phase 3) -----------------------------------
+    # triage_mode: NULL = not yet triaged; "manual" = human-only cohort;
+    # "ai_assisted" = AI suggestion available to the admin (research cohorts).
+    triage_mode = Column(String(20), nullable=True)
+    # Mandatory human-review flag set by the escalation gate (triage.py).
+    review_required = Column(Boolean, nullable=True, default=False)
+    review_reason = Column(String(100), nullable=True)   # low_confidence | hazardous_waste | missing_prediction
+    # Where this row came from: "citizen" (real submission) or "seed" (synthetic).
+    source = Column(String(20), nullable=False, default="citizen")
+    # Explicit resolution timestamp for resolution-time metrics (NULL until resolved).
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+
     # --- Timestamps ---
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
-    # --- Relationship ---
+    # --- Relationships ---
     owner = relationship("User", back_populates="complaints")
     cleanup_task = relationship("CleanupTask", back_populates="complaint", uselist=False)
+    ai_outputs = relationship(
+        "AIOutput",
+        back_populates="complaint",
+        order_by="AIOutput.predicted_at",
+        cascade="all, delete-orphan",
+    )
+    corrections = relationship(
+        "AICorrection",
+        back_populates="complaint",
+        order_by="AICorrection.created_at",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def resolution(self):
@@ -230,3 +260,85 @@ class CleanupProof(Base):
     def __repr__(self):
         return f"<CleanupProof id={self.id} task_id={self.task_id} status={self.verification_status!r}>"
 
+
+# ---------------------------------------------------------------------------
+# MODEL 7 — AIOutput  (NEW — advisory AI triage results)
+# ---------------------------------------------------------------------------
+# One row per AI inference pushed by the AI team. Append-only so re-predictions
+# form a history. The backend NEVER generates these rows itself.
+class AIOutput(Base):
+    __tablename__ = "ai_outputs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=False, index=True)
+
+    # --- Predictions (advisory; humans decide) ---
+    waste_type_pred = Column(String(50), nullable=True)
+    severity_pred = Column(String(50), nullable=True)
+    intervention_required_pred = Column(Boolean, nullable=True)
+
+    # --- Confidence & escalation (the G2 mechanism) ---
+    confidence = Column(Float, nullable=True)                # 0.0–1.0; NULL if model gave none
+    threshold_used = Column(Float, nullable=False, default=0.7)
+    escalated = Column(Boolean, nullable=False, default=False)
+    escalation_reason = Column(String(100), nullable=True)   # low_confidence | hazardous_waste | missing_prediction
+
+    # --- Provenance ---
+    model_name = Column(String(100), nullable=False)
+    model_version = Column(String(50), nullable=False)
+    latency_ms = Column(Integer, nullable=True)
+    predicted_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    complaint = relationship("Complaint", back_populates="ai_outputs")
+
+    def __repr__(self):
+        return (
+            f"<AIOutput id={self.id} complaint_id={self.complaint_id} "
+            f"waste_type={self.waste_type_pred!r} confidence={self.confidence}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# MODEL 8 — AICorrection  (NEW — admin corrections of AI predictions)
+# ---------------------------------------------------------------------------
+# Stores only fields where the human CHANGED the AI value, plus which fields
+# were accepted (ai_value == admin_value rows are acceptance evidence).
+class AICorrection(Base):
+    __tablename__ = "ai_corrections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=False, index=True)
+    field_name = Column(String(50), nullable=False)   # waste_type | quantity_severity | intervention_required
+    ai_value = Column(String(100), nullable=True)     # what the model predicted (as string)
+    admin_value = Column(String(100), nullable=True)  # what the human decided
+    admin_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    complaint = relationship("Complaint", back_populates="corrections")
+    admin = relationship("User")
+
+    def __repr__(self):
+        return f"<AICorrection id={self.id} complaint_id={self.complaint_id} field={self.field_name!r}>"
+
+
+# ---------------------------------------------------------------------------
+# MODEL 9 — EventLog  (NEW — lifecycle event log for process mining)
+# ---------------------------------------------------------------------------
+# One row per state change. Activity vocabulary is controlled by
+# taxonomy.EVENT_ACTIVITIES (see eventlog.log_event). The export endpoint
+# emits pm4py-ready CSV (case:concept:name / concept:name / time:timestamp).
+class EventLog(Base):
+    __tablename__ = "event_log"
+
+    event_id = Column(Integer, primary_key=True, index=True)
+    case_id = Column(String(50), nullable=False, index=True)   # complaint tracking id
+    activity = Column(String(50), nullable=False, index=True)  # controlled vocabulary
+    actor_id = Column(Integer, nullable=True)
+    actor_role = Column(String(50), nullable=True)             # citizen|ai_system|admin|cleaner|system
+    timestamp = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    old_value = Column(String(255), nullable=True)
+    new_value = Column(String(255), nullable=True)
+    meta_json = Column(Text, nullable=True)                    # JSON: confidence, proof_id, reasons...
+
+    def __repr__(self):
+        return f"<EventLog id={self.event_id} case={self.case_id!r} activity={self.activity!r}>"

@@ -20,6 +20,7 @@ from database import get_db
 from models import Complaint, User
 from routers.auth import ALGORITHM, SECRET_KEY
 from schemas import ComplaintResponse, CreateComplaintRequest
+from taxonomy import compute_priority
 
 # ---------------------------------------------------------------------------
 # OAuth2 PASSWORD BEARER
@@ -128,6 +129,13 @@ def create_complaint(
     Supports optional waste management classification and location fields.
     """
 
+    # Derive priority from structured triage inputs when provided; the fixed
+    # rule lives in taxonomy.compute_priority (auditable, comparable across
+    # historical rows for DWM experiments). Falls back to "medium".
+    derived_priority = compute_priority(
+        body.quantity_severity, body.waste_type, body.intervention_required
+    )
+
     new_complaint = Complaint(
         user_id=current_user.id,
         name=current_user.name,
@@ -143,10 +151,33 @@ def create_complaint(
         longitude=body.longitude,
         address_text=body.address_text,
         status="pending",
-        priority="medium",
+        priority=derived_priority,
+        source="citizen",
     )
 
+    # Lifecycle event log (lazy import avoids a module-level import cycle:
+    # routers.eventlog imports get_current_admin_user from this module).
+    # NOTE: db.flush() first so SQLAlchemy assigns tracking_id/id — column
+    # defaults are applied at flush time, not at object construction.
+    from routers.eventlog import log_event
+
     db.add(new_complaint)
+    db.flush()
+    log_event(
+        db,
+        case_id=new_complaint.tracking_id,
+        activity="complaint_created",
+        actor_id=current_user.id,
+        actor_role="citizen",
+        new_value="pending",
+        meta={
+            "priority": derived_priority,
+            "waste_type": body.waste_type,
+            "quantity_severity": body.quantity_severity,
+            "intervention_required": body.intervention_required,
+        },
+    )
+
     try:
         db.commit()
         db.refresh(new_complaint)

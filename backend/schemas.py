@@ -7,45 +7,40 @@
 #   2. Documentation — FastAPI reads these to generate the /docs page automatically
 #
 # This file uses Pydantic v2 syntax (installed: 2.5.x).
+#
+# Phase-3 additions: taxonomy-validated waste fields, AIDecisionRequest,
+# and admin-facing research schemas (AI output, corrections, decision state).
 
-from typing import Optional, Literal
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+
+from taxonomy import PRIORITIES, SEVERITIES, TRIAGE_MODES, WASTE_TYPES
+
+WasteType = Literal["dry", "wet", "e_waste", "medical", "hazardous", "bulk"]
+Severity = Literal["small", "medium", "large"]
+TriageMode = Literal["manual", "ai_assisted"]
 
 
 # ---------------------------------------------------------------------------
 # SCHEMA 1 — RegisterRequest
 # ---------------------------------------------------------------------------
-# Shape of the JSON body a client must send to create a new account.
-#
-# Example valid request body:
-# {
-#   "name": "Ashish Kumar",
-#   "email": "ashish@example.com",
-#   "password": "secret123",
-#   "role": "citizen",
-#   "department": "Finance"
-# }
 class RegisterRequest(BaseModel):
 
-    # Full name — must be between 2 and 100 characters, cannot be blank spaces
     name: str = Field(
-        ...,                   # "..." means this field is required (no default)
+        ...,
         min_length=2,
         max_length=100,
         description="Full name of the user",
         examples=["Ashish Kumar"],
     )
 
-    # Email — Pydantic's EmailStr validates the format automatically
-    # (e.g. rejects "notanemail" or "missing@dot")
     email: EmailStr = Field(
         ...,
         description="A valid email address",
         examples=["ashish@example.com"],
     )
 
-    # Password — at least 8 characters to prevent trivially weak passwords
     password: str = Field(
         ...,
         min_length=8,
@@ -54,15 +49,12 @@ class RegisterRequest(BaseModel):
         examples=["secret123"],
     )
 
-    # Role — optional; defaults to "citizen" if the client doesn't send it
-    # Only the values listed in the validator are accepted.
     role: Optional[str] = Field(
         default="citizen",
-        description='User role: "citizen", "staff", or "admin"',
+        description='User role: "citizen", "staff", or "admin" (always stored as "citizen")',
         examples=["citizen"],
     )
 
-    # Department — optional; only relevant for staff/admin users
     department: Optional[str] = Field(
         default=None,
         max_length=100,
@@ -70,16 +62,13 @@ class RegisterRequest(BaseModel):
         examples=["Finance"],
     )
 
-    # --- Field-level validators ---
-    # These run automatically when Pydantic receives incoming data.
-
     @field_validator("name")
     @classmethod
     def name_must_not_be_blank(cls, value: str) -> str:
         """Reject names that are only whitespace (e.g. '   ')."""
         if not value.strip():
             raise ValueError("Name cannot be blank or whitespace only.")
-        return value.strip()   # also strip surrounding spaces before saving
+        return value.strip()
 
     @field_validator("role")
     @classmethod
@@ -103,13 +92,6 @@ class RegisterRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # SCHEMA 2 — LoginRequest
 # ---------------------------------------------------------------------------
-# Shape of the JSON body a client sends to log in.
-#
-# Example:
-# {
-#   "email": "ashish@example.com",
-#   "password": "secret123"
-# }
 class LoginRequest(BaseModel):
 
     email: EmailStr = Field(
@@ -120,7 +102,7 @@ class LoginRequest(BaseModel):
 
     password: str = Field(
         ...,
-        min_length=8,          # same floor as registration to give helpful errors
+        min_length=8,
         max_length=128,
         description="Account password",
         examples=["secret123"],
@@ -130,14 +112,6 @@ class LoginRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # SCHEMA 3 — TokenResponse
 # ---------------------------------------------------------------------------
-# Shape of the JSON body the server sends BACK after a successful login.
-# This is what the client stores and includes in future requests.
-#
-# Example response:
-# {
-#   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-#   "token_type": "bearer"
-# }
 class TokenResponse(BaseModel):
 
     access_token: str = Field(
@@ -154,16 +128,6 @@ class TokenResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # SCHEMA 4 — RegisterResponse
 # ---------------------------------------------------------------------------
-# Shape of the JSON body the server sends back after a successful registration.
-# We deliberately exclude the password hash — never expose it in a response.
-#
-# Example response:
-# {
-#   "id": 1,
-#   "name": "Ashish Kumar",
-#   "email": "ashish@example.com",
-#   "role": "citizen"
-# }
 class RegisterResponse(BaseModel):
 
     id: int = Field(..., description="Auto-assigned database ID of the new user")
@@ -171,8 +135,6 @@ class RegisterResponse(BaseModel):
     email: EmailStr = Field(..., description="Email that was stored")
     role: str = Field(..., description="Role assigned to the user")
 
-    # model_config tells Pydantic v2 to read data from SQLAlchemy ORM objects
-    # (not just plain dictionaries).  Without this, response_model would fail.
     model_config = {"from_attributes": True}
 
 
@@ -182,7 +144,7 @@ class RegisterResponse(BaseModel):
 class CreateComplaintRequest(BaseModel):
 
     complaint_text: str = Field(
-        ...,                   # required field
+        ...,
         min_length=10,
         max_length=5000,
         description="The full text of the complaint (10–5000 characters)",
@@ -196,26 +158,25 @@ class CreateComplaintRequest(BaseModel):
         examples=["9876543210"],
     )
 
-    # Waste Management Fields
-    waste_type: Optional[str] = Field(default=None, description="Type of waste (e.g. E-waste, Medical waste, Dry waste, Wet waste)")
-    waste_context: Optional[str] = Field(default=None, description="Waste context or environment description")
-    quantity_severity: Optional[str] = Field(default=None, description="Quantity or severity level (small, medium, large, hazardous)")
-    recommended_action: Optional[str] = Field(default=None, description="Disposal guidance or cleaner instructions")
+    # Waste Management Fields — validated against the research taxonomy.
+    waste_type: Optional[WasteType] = Field(default=None, description="Type of waste (dry, wet, e_waste, medical, hazardous, bulk)")
+    waste_context: Optional[str] = Field(default=None, max_length=2000, description="Waste context or environment description")
+    quantity_severity: Optional[Severity] = Field(default=None, description="Quantity or severity level (small, medium, large)")
+    recommended_action: Optional[str] = Field(default=None, max_length=2000, description="Disposal guidance or cleaner instructions")
     intervention_required: Optional[bool] = Field(default=False, description="Whether cleaner intervention is required")
 
     # Location Fields
     latitude: Optional[float] = Field(default=None, description="Latitude coordinate")
     longitude: Optional[float] = Field(default=None, description="Longitude coordinate")
-    address_text: Optional[str] = Field(default=None, description="Human-readable location address/landmark")
+    address_text: Optional[str] = Field(default=None, max_length=255, description="Human-readable location address/landmark")
 
-    # --- Field-level validator ---
     @field_validator("complaint_text")
     @classmethod
     def complaint_text_must_not_be_blank(cls, value: str) -> str:
         """Reject complaint text that is only whitespace."""
         if not value.strip():
             raise ValueError("Complaint text cannot be blank or whitespace only.")
-        return value.strip()   # strip surrounding spaces before saving
+        return value.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +201,7 @@ class ComplaintResponse(BaseModel):
 
     priority: str = Field(
         ...,
-        description='Priority level assigned to the complaint (e.g. "medium")',
+        description="Priority level derived from severity/waste type (low/medium/high/urgent)",
     )
 
     department: Optional[str] = Field(
@@ -258,6 +219,13 @@ class ComplaintResponse(BaseModel):
     longitude: Optional[float] = Field(default=None, description="Longitude coordinate")
     address_text: Optional[str] = Field(default=None, description="Location text")
 
+    # Research fields (surfaced for admin UI + frontend work)
+    triage_mode: Optional[TriageMode] = Field(default=None, description="manual | ai_assisted | null (not yet triaged)")
+    review_required: Optional[bool] = Field(default=False, description="Whether mandatory human review is pending")
+    review_reason: Optional[str] = Field(default=None, description="Why review was required (low_confidence | hazardous_waste | missing_prediction)")
+    resolved_at: Optional[str] = Field(default=None, description="ISO 8601 timestamp when the complaint was resolved")
+    source: str = Field(default="citizen", description="Origin of the complaint: citizen (real) | seed (synthetic research data)")
+
     created_at: str = Field(
         ...,
         description="ISO 8601 timestamp of when the complaint was created",
@@ -265,10 +233,12 @@ class ComplaintResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    @field_validator("created_at", mode="before")
+    @field_validator("created_at", "resolved_at", mode="before")
     @classmethod
     def serialise_datetime(cls, value):
         """Convert datetime → ISO 8601 string if it isn't already a string."""
+        if value is None:
+            return None
         if hasattr(value, "isoformat"):
             return value.isoformat()
         return str(value)
@@ -306,8 +276,6 @@ class AdminComplaintUpdateRequest(BaseModel):
         stripped = value.strip()
         return stripped if stripped else None
 
-    from pydantic import model_validator
-
     @model_validator(mode="after")
     def at_least_one_field_required(self) -> "AdminComplaintUpdateRequest":
         if self.status is None and self.priority is None and self.department is None:
@@ -320,8 +288,6 @@ class AdminComplaintUpdateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # SCHEMA 8 — AdminQueueItem
 # ---------------------------------------------------------------------------
-from typing import List, Any
-
 class AdminQueueItem(BaseModel):
 
     id: str = Field(..., alias="tracking_id", description="Public tracking reference")
@@ -358,22 +324,27 @@ class AdminQueueItem(BaseModel):
     longitude: Optional[float] = Field(default=None, description="Longitude")
     address_text: Optional[str] = Field(default=None, description="Address text")
 
+    # Research fields for the admin AI panel (Phase 3)
+    triage_mode: Optional[TriageMode] = Field(default=None, description="manual | ai_assisted | null")
+    review_required: Optional[bool] = Field(default=False, description="Mandatory review pending")
+    review_reason: Optional[str] = Field(default=None, description="Escalation reason")
+
     channel: str = Field(
         default="Backend",
         description="Submission channel",
     )
 
-    classification: Optional[Any] = Field(default=None)
-    entities: List[Any] = Field(default_factory=list)
-    evidence: List[Any] = Field(default_factory=list)
-    ai_draft: Optional[Any] = Field(default=None)
+    classification: Optional[dict] = Field(default=None)
+    entities: List[dict] = Field(default_factory=list)
+    evidence: List[dict] = Field(default_factory=list)
+    ai_draft: Optional[dict] = Field(default=None)
     edited_draft: Optional[str] = Field(default=None)
-    resolution: Optional[Any] = Field(default=None)
+    resolution: Optional[dict] = Field(default=None)
     closure_reason: Optional[str] = Field(default=None)
     duplicate_of: Optional[str] = Field(default=None)
-    comments: List[Any] = Field(default_factory=list)
-    audit: List[Any] = Field(default_factory=list)
-    attachments: List[Any] = Field(default_factory=list)
+    comments: List[dict] = Field(default_factory=list)
+    audit: List[dict] = Field(default_factory=list)
+    attachments: List[dict] = Field(default_factory=list)
 
     model_config = {
         "from_attributes": True,
@@ -391,6 +362,7 @@ class AdminQueueItem(BaseModel):
         if hasattr(value, "isoformat"):
             return value.isoformat()
         return str(value)
+
 
 # ---------------------------------------------------------------------------
 # SCHEMA 9 — ApproveResponseRequest & Result
@@ -412,6 +384,7 @@ class ApproveResponseResult(BaseModel):
     approved_by: str
     approved_at: str
     status: str
+
 
 # ---------------------------------------------------------------------------
 # SCHEMA 10 — CLEANER & TASK SCHEMAS
@@ -491,3 +464,82 @@ class VerifyProofResult(BaseModel):
     complaint_status: str
     verified_at: str
 
+
+# ---------------------------------------------------------------------------
+# SCHEMA 11 — HUMAN-IN-THE-LOOP AI DECISION  (NEW, Phase 3)
+# ---------------------------------------------------------------------------
+class AICorrectionItem(BaseModel):
+    field_name: str
+    ai_value: Optional[str] = Field(default=None, description="What the AI predicted (as string); omit if the field had no AI output")
+    admin_value: Optional[str] = Field(default=None, description="What the human decided (as string)")
+
+
+class AIDecisionRequest(BaseModel):
+    """Admin accept/correct of the AI suggestion + the dispatch/guidance decision.
+
+    corrections: only fields the human CHANGED (field_name, ai_value, admin_value).
+    Accepted fields may be passed with ai_value == admin_value to record
+    acceptance evidence; both are stored and distinguishable.
+    """
+
+    waste_type: WasteType
+    quantity_severity: Severity
+    intervention_required: bool
+    decision: Literal["dispatch", "guidance"] = Field(..., description="Dispatch a cleaner OR resolve with self-disposal guidance")
+    guidance_text: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=5000,
+        description="Required when decision=guidance; the disposal advice sent to the citizen",
+    )
+    notes: Optional[str] = Field(default=None, max_length=2000, description="Optional admin notes")
+    corrections: List[AICorrectionItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "AIDecisionRequest":
+        if self.decision == "guidance" and not (self.guidance_text or "").strip():
+            raise ValueError("guidance_text is required when decision is 'guidance'.")
+        if self.decision == "guidance" and self.intervention_required:
+            raise ValueError("intervention_required must be false when choosing self-disposal guidance.")
+        allowed_fields = {"waste_type", "quantity_severity", "intervention_required"}
+        for correction in self.corrections:
+            if correction.field_name not in allowed_fields:
+                raise ValueError(f"corrections.field_name must be one of {sorted(allowed_fields)}")
+        return self
+
+
+class AICorrectionResponse(BaseModel):
+    id: int
+    complaint_id: int
+    field_name: str
+    ai_value: Optional[str]
+    admin_value: Optional[str]
+    admin_id: int
+    created_at: str
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def serialise_created_at(cls, value):
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+class AIDecisionResponse(BaseModel):
+    """Result of POST /admin/complaints/{id}/ai-decision."""
+
+    tracking_id: str
+    triage_mode: TriageMode
+    review_completed: bool
+    decision: str                      # dispatch | guidance
+    waste_type: Optional[str]
+    quantity_severity: Optional[str]
+    intervention_required: bool
+    priority: str
+    status: str                        # in_progress (dispatch) | resolved (guidance)
+    task_id: Optional[str] = None      # TSK id when decision=dispatch
+    corrections_recorded: int          # fields where human != AI (true corrections)
+    acceptance_rate_fields: int        # fields with AI output that were accepted
+    resolved_at: Optional[str] = None

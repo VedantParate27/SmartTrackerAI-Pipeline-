@@ -44,39 +44,63 @@ Base = declarative_base()
 # ---------------------------------------------------------------------------
 # 5. IDEMPOTENT MIGRATION HELPER
 # ---------------------------------------------------------------------------
+def _column_ddl(column) -> str:
+    """Render a SQLAlchemy column as SQLite ADD COLUMN DDL (no server defaults —
+    SQLite cannot add columns with non-constant defaults, so new columns are
+    nullable and the ORM supplies defaults for new rows)."""
+    from sqlalchemy import Boolean, DateTime, Float, String, Text
+
+    col_type = str(column.type)
+    if isinstance(column.type, Boolean):
+        col_type = "BOOLEAN"
+    elif isinstance(column.type, DateTime):
+        col_type = "DATETIME"
+    elif isinstance(column.type, Float):
+        col_type = "FLOAT"
+    elif isinstance(column.type, Text):
+        col_type = "TEXT"
+    elif isinstance(column.type, String) and column.type.length:
+        col_type = f"VARCHAR({column.type.length})"
+    return f"{column.name} {col_type}"
+
+
 def run_migrations(target_engine=None):
     """
     Idempotent schema migration for SQLite databases.
-    Ensures missing columns and new tables are safely added to existing database files
-    without dropping or modifying existing data.
+
+    Ensures all declared tables exist and every declared column is present on
+    existing tables (ALTER TABLE ... ADD COLUMN), without dropping or modifying
+    existing data. Generalized in Phase 3 to cover ALL tables so the new
+    research-layer columns (complaints) and tables (ai_outputs, ai_corrections,
+    event_log) appear on databases created by earlier versions.
     """
     if target_engine is None:
         target_engine = engine
 
-    # Ensure all declared tables exist
+    # Ensure all declared tables exist (safe no-op for existing tables)
     Base.metadata.create_all(bind=target_engine)
 
-    from models import Complaint
-    from sqlalchemy import Boolean, DateTime, String
+    from sqlalchemy import inspect as sa_inspect
 
-    inspector = inspect(target_engine)
-    if "complaints" in inspector.get_table_names():
-        existing_columns = {col["name"] for col in inspector.get_columns("complaints")}
+    inspector = sa_inspect(target_engine)
 
-        for column in Complaint.__table__.columns:
-            if column.name not in existing_columns:
-                col_type = str(column.type)
-                if isinstance(column.type, Boolean):
-                    col_type = "BOOLEAN DEFAULT 0"
-                elif isinstance(column.type, DateTime):
-                    col_type = "DATETIME"
-                elif isinstance(column.type, String) and column.type.length:
-                    col_type = f"VARCHAR({column.type.length})"
+    for table in Base.metadata.sorted_tables:
+        if table.name not in inspector.get_table_names():
+            continue  # create_all already handled brand-new tables
+        existing_columns = {col["name"] for col in inspector.get_columns(table.name)}
 
-                with target_engine.begin() as connection:
-                    connection.execute(
-                        text(f"ALTER TABLE complaints ADD COLUMN {column.name} {col_type}")
-                    )
+        for column in table.columns:
+            if column.name in existing_columns:
+                continue
+            # Never ALTER primary keys or foreign keys on existing tables;
+            # new tables created by create_all always carry them already.
+            if column.primary_key or column.foreign_keys:
+                continue
+            ddl = _column_ddl(column)
+            with target_engine.begin() as connection:
+                connection.execute(
+                    text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}")
+                )
 
 
 

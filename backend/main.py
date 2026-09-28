@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 # Database imports
 # ---------------------------------------------------------------------------
 from database import Base, engine, run_migrations
-from models import AppStateSnapshot, Complaint, User, Response, CleanupTask, CleanupProof  # noqa: F401
+from models import AppStateSnapshot, Complaint, User, Response, CleanupTask, CleanupProof, AIOutput, AICorrection, EventLog  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Router imports
@@ -19,6 +19,9 @@ from routers import complaints as complaints_router
 from routers import admin as admin_router
 from routers import cleaner as cleaner_router
 from routers import app_state as app_state_router
+from routers import eventlog as eventlog_router
+from routers import mining as mining_router
+import triage as triage_router  # backend-level service module (like mining.py)
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +88,9 @@ app.include_router(complaints_router.router)
 app.include_router(admin_router.router)
 app.include_router(cleaner_router.router)
 app.include_router(app_state_router.router)
+app.include_router(eventlog_router.router)
+app.include_router(mining_router.router)
+app.include_router(triage_router.router)
 
 
 # ---------------------------------------------------------------------------

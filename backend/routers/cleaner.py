@@ -1,5 +1,9 @@
 # routers/cleaner.py
 # Handles cleaner-specific API endpoints for Waste Management AI.
+#
+# Phase-3 additions: task_started event (timestamps the field-execution stage
+# for process mining) and event logging on proof upload. Everything else is
+# the existing, tested workflow.
 
 import os
 import uuid
@@ -11,6 +15,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import CleanupProof, CleanupTask, User, utcnow
 from routers.complaints import get_current_cleaner_user
+from routers.eventlog import log_event
 from schemas import CleanerTaskResponse, CleanupProofResponse
 
 router = APIRouter(prefix="/cleaner", tags=["cleaner"])
@@ -66,6 +71,22 @@ def build_cleaner_task_response(task: CleanupTask) -> CleanerTaskResponse:
     )
 
 
+def _get_task_checked(db: Session, task_id: str, current_user: User) -> CleanupTask:
+    """Shared lookup + object-level authorization for cleaner task endpoints."""
+    task = db.query(CleanupTask).filter(CleanupTask.task_id == task_id).first()
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found.",
+        )
+    if current_user.role != "admin" and task.assigned_cleaner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not assigned to this task.",
+        )
+    return task
+
+
 # ---------------------------------------------------------------------------
 # GET /cleaner/tasks
 # ---------------------------------------------------------------------------
@@ -103,17 +124,55 @@ def get_cleaner_task_detail(
     current_user: User = Depends(get_current_cleaner_user),
 ):
     """Return task details including location coordinates and instructions."""
-    task = db.query(CleanupTask).filter(CleanupTask.task_id == task_id).first()
-    if not task:
+    task = _get_task_checked(db, task_id, current_user)
+    return build_cleaner_task_response(task)
+
+
+# ---------------------------------------------------------------------------
+# POST /cleaner/tasks/{task_id}/start   (NEW — field-execution timestamp)
+# ---------------------------------------------------------------------------
+@router.post(
+    "/tasks/{task_id}/start",
+    response_model=CleanerTaskResponse,
+    status_code=status.HTTP_200_OK,
+    summary="[Cleaner] Mark a task as started (field-execution timestamp)",
+)
+def start_cleanup_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_cleaner_user),
+):
+    """Record that the cleaner began the cleanup. Optional but recommended:
+    it gives process mining an explicit field-execution start time; otherwise
+    the first proof upload is the only field-stage signal."""
+    task = _get_task_checked(db, task_id, current_user)
+
+    if task.status == "assigned":
+        task.status = "in_progress"
+    elif task.status != "in_progress":
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Task cannot be started from status '{task.status}'.",
         )
 
-    if current_user.role != "admin" and task.assigned_cleaner_id != current_user.id:
+    log_event(
+        db,
+        case_id=task.complaint.tracking_id,
+        activity="task_started",
+        actor_id=current_user.id,
+        actor_role="cleaner",
+        old_value="assigned",
+        new_value="in_progress",
+    )
+
+    try:
+        db.commit()
+        db.refresh(task)
+    except Exception:
+        db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not assigned to this task.",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start task.",
         )
 
     return build_cleaner_task_response(task)
@@ -134,19 +193,8 @@ async def upload_cleanup_proof(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_cleaner_user),
 ):
-    """Upload a proof photo file for a assigned cleanup task."""
-    task = db.query(CleanupTask).filter(CleanupTask.task_id == task_id).first()
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found.",
-        )
-
-    if current_user.role != "admin" and task.assigned_cleaner_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not assigned to this task.",
-        )
+    """Upload a proof photo file for an assigned cleanup task."""
+    task = _get_task_checked(db, task_id, current_user)
 
     ext = os.path.splitext(file.filename)[1] if file.filename else ".jpg"
     filename = f"proof_{uuid.uuid4().hex}{ext}"
@@ -166,6 +214,17 @@ async def upload_cleanup_proof(
     )
     db.add(proof)
     task.status = "proof_submitted"
+
+    log_event(
+        db,
+        case_id=task.complaint.tracking_id,
+        activity="proof_submitted",
+        actor_id=current_user.id,
+        actor_role="cleaner",
+        old_value=task.status,
+        new_value="proof_submitted",
+        meta={"proof_id": proof.id, "image_url": image_url},
+    )
 
     try:
         db.commit()

@@ -68,7 +68,7 @@ def test_full_waste_management_end_to_end_workflow():
     complaint_payload = {
         "complaint_text": "Discarded CRT monitor and battery waste near public park entrance.",
         "phone": "+91 9876543210",
-        "waste_type": "E-waste",
+        "waste_type": "e_waste",
         "waste_context": "Outdoor public park, accumulated near entrance",
         "quantity_severity": "large",
         "recommended_action": "Specialized electronic waste recycling collection required.",
@@ -82,7 +82,7 @@ def test_full_waste_management_end_to_end_workflow():
     comp_data = created.json()
     tracking_id = comp_data["tracking_id"]
     assert comp_data["status"] == "pending"
-    assert comp_data["waste_type"] == "E-waste"
+    assert comp_data["waste_type"] == "e_waste"
     assert comp_data["latitude"] == 12.9716
 
     with TestingSessionLocal() as db:
@@ -97,7 +97,7 @@ def test_full_waste_management_end_to_end_workflow():
     single_queue_res = client.get(f"/admin/queue/{tracking_id}", headers=admin_headers)
     assert single_queue_res.status_code == 200
     assert single_queue_res.json()["tracking_id"] == tracking_id
-    assert single_queue_res.json()["waste_type"] == "E-waste"
+    assert single_queue_res.json()["waste_type"] == "e_waste"
 
     # 5. Admin assigns complaint to cleaner
     assign_res = client.post(
@@ -126,7 +126,7 @@ def test_full_waste_management_end_to_end_workflow():
     task_detail = client.get(f"/cleaner/tasks/{task_id}", headers=cleaner_headers)
     assert task_detail.status_code == 200
     assert task_detail.json()["task_id"] == task_id
-    assert task_detail.json()["waste_type"] == "E-waste"
+    assert task_detail.json()["waste_type"] == "e_waste"
 
     # 7. Cleaner uploads cleanup proof photo
     dummy_image = io.BytesIO(b"fake image bytes")
@@ -227,7 +227,7 @@ def test_proof_rejection_and_resubmission_flow():
     # 2. Submit complaint & assign cleaner
     comp = client.post("/complaints/", headers=cit_headers, json={
         "complaint_text": "Medical waste syringe discarded in alley.",
-        "waste_type": "Medical waste",
+        "waste_type": "medical",
         "intervention_required": True
     }).json()
     tracking_id = comp["tracking_id"]
@@ -287,7 +287,7 @@ def test_self_disposal_guidance_path():
     # Submit minor complaint requiring no intervention
     comp = client.post("/complaints/", headers=cit_headers, json={
         "complaint_text": "Single candy wrapper on sidewalk.",
-        "waste_type": "Dry waste",
+        "waste_type": "dry",
         "quantity_severity": "small",
         "recommended_action": "Please dispose of wrapper in the nearest dry waste bin.",
         "intervention_required": False
