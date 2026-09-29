@@ -3,12 +3,20 @@ import { Callout, ErrorState, Field, Spinner } from './ui'
 import { fieldErrors } from '#/lib/api'
 import { registerAndSignIn, signIn, signOut, useAuth } from '#/lib/auth'
 
+/** Roles each staff area accepts — mirrors get_current_admin_user / get_current_cleaner_user. */
+const ACCEPTED: Record<'admin' | 'cleaner', string[]> = {
+  admin: ['admin'],
+  cleaner: ['cleaner', 'admin'],
+}
+
 export default function AuthPanel({
-  adminOnly = false,
+  requireRole,
 }: {
-  adminOnly?: boolean
+  /** A staff area; hides citizen registration and flags the wrong role. */
+  requireRole?: 'admin' | 'cleaner'
 }) {
   const { session, hydrated } = useAuth()
+  const staffOnly = requireRole !== undefined
   const [registering, setRegistering] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -22,12 +30,14 @@ export default function AuthPanel({
   }
 
   if (session) {
+    const wrongRole =
+      requireRole !== undefined && !ACCEPTED[requireRole].includes(session.role)
     return (
       <Callout
-        tone={adminOnly && session.role !== 'admin' ? 'danger' : 'ok'}
+        tone={wrongRole ? 'danger' : 'ok'}
         title={
-          adminOnly && session.role !== 'admin'
-            ? 'Admin account required'
+          wrongRole
+            ? `${requireRole === 'admin' ? 'Admin' : 'Cleaner'} account required`
             : 'Signed in'
         }
       >
@@ -48,17 +58,19 @@ export default function AuthPanel({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 id="account-heading" className="card-title">
-            {adminOnly
+            {requireRole === 'admin'
               ? 'Admin sign in'
-              : registering
-                ? 'Create a citizen account'
-                : 'Sign in to continue'}
+              : requireRole === 'cleaner'
+                ? 'Cleaner sign in'
+                : registering
+                  ? 'Create a citizen account'
+                  : 'Sign in to continue'}
           </h2>
           <p className="hint">
             Complaints are protected by the backend and require a JWT session.
           </p>
         </div>
-        {!adminOnly ? (
+        {!staffOnly ? (
           <button
             type="button"
             className="btn btn-sm"
@@ -87,7 +99,7 @@ export default function AuthPanel({
           setError(null)
           setFields({})
           try {
-            if (registering && !adminOnly) {
+            if (registering && !staffOnly) {
               await registerAndSignIn({
                 name: name.trim(),
                 email: email.trim(),
@@ -108,7 +120,7 @@ export default function AuthPanel({
           }
         }}
       >
-        {registering && !adminOnly ? (
+        {registering && !staffOnly ? (
           <Field
             label="Full name"
             htmlFor="auth-name"
@@ -164,7 +176,7 @@ export default function AuthPanel({
           {busy ? <Spinner /> : null}
           {busy
             ? 'Signing in…'
-            : registering && !adminOnly
+            : registering && !staffOnly
               ? 'Create account and sign in'
               : 'Sign in'}
         </button>

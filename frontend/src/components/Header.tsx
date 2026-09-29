@@ -5,12 +5,13 @@ import { checkHealth } from '#/lib/api'
 
 const LINKS = [
   { to: '/', label: 'Home' },
-  { to: '/submit', label: 'Submit grievance' },
-  { to: '/track', label: 'Track status' },
+  { to: '/submit', label: 'Report waste' },
+  { to: '/track', label: 'Track' },
+  { to: '/cleaner', label: 'Cleaner' },
   { to: '/admin', label: 'Admin' },
 ] as const
 
-/** Shield + check: a grievance carried through to a verified resolution. */
+/** Shield + check: a complaint carried through to a verified cleanup. */
 function BrandMark() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">

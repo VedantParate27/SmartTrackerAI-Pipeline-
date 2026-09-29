@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import {
   BackendPriorityPill,
@@ -6,17 +6,22 @@ import {
   Callout,
   EmptyState,
   ErrorState,
+  ReviewPill,
   Skeleton,
   Spinner,
+  WastePill,
 } from '#/components/ui'
-import { getAdminQueue } from '#/lib/api'
+import { WASTE_TYPES, getAdminQueue } from '#/lib/api'
 import type { AdminQueueItem } from '#/lib/api'
-import { isExpiredSession, signOut, useAuth } from '#/lib/auth'
+import { signOut, useAuth } from '#/lib/auth'
 import {
-  backendCategory,
-  backendClassificationConfidence,
+  formatCoordinates,
+  severityLabel,
+  triageModeLabel,
+  wasteLabel,
 } from '#/lib/complaint-format'
 import { formatAge } from '#/lib/format'
+import { useApi } from '#/lib/use-api'
 
 export const Route = createFileRoute('/admin/')({ component: QueuePage })
 
@@ -33,44 +38,21 @@ function summary(item: AdminQueueItem) {
 
 function QueuePage() {
   const { session } = useAuth()
-  const [cases, setCases] = useState<AdminQueueItem[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [expired, setExpired] = useState(false)
-  const [reload, setReload] = useState(0)
+  const token = session?.role === 'admin' ? session.accessToken : undefined
+  const queue = useApi(
+    token ? (signal) => getAdminQueue(token, signal) : null,
+    [token],
+  )
+  const cases = useMemo(() => queue.data ?? [], [queue.data])
+
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('any')
-  const [department, setDepartment] = useState('any')
+  const [waste, setWaste] = useState('any')
+  const [review, setReview] = useState('any')
   const [priority, setPriority] = useState('any')
-
-  useEffect(() => {
-    if (!session || session.role !== 'admin') return
-    const controller = new AbortController()
-    setLoading(true)
-    setError(null)
-    getAdminQueue(session.accessToken, controller.signal)
-      .then(setCases)
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted) return
-        setExpired(isExpiredSession(caught))
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : 'The complaint queue could not be loaded.',
-        )
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-    return () => controller.abort()
-  }, [reload, session])
 
   const statusOptions = useMemo(
     () => unique(cases.map((item) => item.status)),
-    [cases],
-  )
-  const departmentOptions = useMemo(
-    () => unique(cases.map((item) => item.department)),
     [cases],
   )
   const priorityOptions = useMemo(
@@ -86,38 +68,41 @@ function QueuePage() {
         item.complaint_text,
         item.name,
         item.email,
-        backendCategory(item.classification),
-        item.department,
+        item.address_text,
+        wasteLabel(item.waste_type),
       ]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
       if (needle && !haystack.includes(needle)) return false
       if (status !== 'any' && item.status !== status) return false
-      if (department !== 'any' && item.department !== department) {
+      if (waste === 'none' && item.waste_type) return false
+      if (waste !== 'any' && waste !== 'none' && item.waste_type !== waste) {
         return false
       }
+      if (review === 'yes' && !item.review_required) return false
+      if (review === 'no' && item.review_required) return false
       if (priority !== 'any' && item.priority !== priority) return false
       return true
     })
-  }, [cases, search, status, department, priority])
+  }, [cases, search, status, waste, review, priority])
 
   const stats = useMemo(() => {
-    const count = (wanted: string[]) =>
-      cases.filter((item) => wanted.includes(item.status.toLowerCase())).length
+    const count = (wanted: string) =>
+      cases.filter((item) => item.status.toLowerCase() === wanted).length
     return [
-      { label: 'Total complaints', value: cases.length },
-      { label: 'Pending', value: count(['pending']) },
-      { label: 'In progress', value: count(['in_progress']) },
-      { label: 'Resolved', value: count(['resolved']) },
+      { label: 'Total', value: cases.length },
       {
-        label: 'Unassigned',
-        value: cases.filter((item) => !item.department).length,
+        label: 'Needs review',
+        value: cases.filter((item) => item.review_required).length,
       },
+      { label: 'Pending', value: count('pending') },
+      { label: 'In progress', value: count('in_progress') },
+      { label: 'Resolved', value: count('resolved') },
     ]
   }, [cases])
 
-  if (!session || session.role !== 'admin') {
+  if (!token) {
     return (
       <Callout tone="danger" title="Admin session required">
         Sign in with a backend admin account to load this queue.
@@ -127,12 +112,12 @@ function QueuePage() {
 
   return (
     <div className="grid gap-4">
-      {error ? (
+      {queue.error ? (
         <ErrorState
           title="Queue request failed"
-          message={error}
-          onRetry={() => setReload((n) => n + 1)}
-          onReauth={expired ? signOut : undefined}
+          message={queue.error}
+          onRetry={queue.reload}
+          onReauth={queue.expired ? signOut : undefined}
         />
       ) : null}
 
@@ -143,7 +128,7 @@ function QueuePage() {
         {stats.map((stat) => (
           <div key={stat.label} className="stat">
             <p className="stat-value m-0">
-              {loading && cases.length === 0 ? (
+              {queue.loading && !queue.data ? (
                 <Skeleton className="mt-2 h-5 w-10" />
               ) : (
                 stat.value
@@ -162,22 +147,46 @@ function QueuePage() {
           <button
             type="button"
             className="btn btn-sm"
-            disabled={loading}
-            onClick={() => setReload((n) => n + 1)}
+            disabled={queue.loading}
+            onClick={queue.reload}
           >
-            {loading ? <Spinner /> : null}
-            {loading ? 'Refreshing…' : 'Refresh from backend'}
+            {queue.loading ? <Spinner /> : null}
+            {queue.loading ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <input
-            className="input"
+            className="input lg:col-span-1"
             type="search"
             aria-label="Search complaints"
-            placeholder="Search reference, requester or complaint text"
+            placeholder="Search ID, text, address"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
+          <select
+            className="select"
+            aria-label="Review"
+            value={review}
+            onChange={(event) => setReview(event.target.value)}
+          >
+            <option value="any">Any review state</option>
+            <option value="yes">Needs review</option>
+            <option value="no">No review pending</option>
+          </select>
+          <select
+            className="select"
+            aria-label="Waste type"
+            value={waste}
+            onChange={(event) => setWaste(event.target.value)}
+          >
+            <option value="any">Any waste type</option>
+            {WASTE_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {wasteLabel(type)}
+              </option>
+            ))}
+            <option value="none">Not set</option>
+          </select>
           <select
             className="select"
             aria-label="Status"
@@ -188,19 +197,6 @@ function QueuePage() {
             {statusOptions.map((item) => (
               <option key={item} value={item}>
                 {item.replaceAll('_', ' ')}
-              </option>
-            ))}
-          </select>
-          <select
-            className="select"
-            aria-label="Department"
-            value={department}
-            onChange={(event) => setDepartment(event.target.value)}
-          >
-            <option value="any">Any department</option>
-            {departmentOptions.map((item) => (
-              <option key={item} value={item}>
-                {item}
               </option>
             ))}
           </select>
@@ -223,18 +219,18 @@ function QueuePage() {
       <section
         className="card overflow-hidden"
         aria-labelledby="queue-heading"
-        aria-busy={loading}
+        aria-busy={queue.loading}
       >
         <div className="card-head">
           <h2 id="queue-heading" className="card-title">
-            Live complaint queue
+            Complaint queue
           </h2>
           <div className="text-xs muted">
             {filtered.length} of {cases.length} complaints
           </div>
         </div>
 
-        {loading && cases.length === 0 ? (
+        {queue.loading && !queue.data ? (
           <div
             className="divide-rows"
             role="status"
@@ -256,55 +252,56 @@ function QueuePage() {
             {filtered.length === 0 ? (
               <EmptyState>
                 {cases.length === 0
-                  ? 'The backend has no complaints yet. Submit one to populate this queue.'
+                  ? 'The backend has no complaints yet. Submit one, or run the seeder, to populate this queue.'
                   : 'No complaints match the current filters.'}
               </EmptyState>
             ) : (
-              filtered.map((item) => {
-                const category = backendCategory(item.classification)
-                const confidence = backendClassificationConfidence(
-                  item.classification,
-                )
-                return (
-                  <Link
-                    key={item.tracking_id}
-                    to="/admin/cases/$caseId"
-                    params={{ caseId: item.tracking_id }}
-                    className="queue-row"
+              filtered.map((item) => (
+                <Link
+                  key={item.tracking_id}
+                  to="/admin/cases/$caseId"
+                  params={{ caseId: item.tracking_id }}
+                  className="queue-row"
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="mono font-bold">{item.tracking_id}</span>
+                    <BackendStatusPill status={item.status} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="m-0 text-sm">{summary(item)}</p>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      <ReviewPill
+                        required={item.review_required}
+                        reason={item.review_reason}
+                      />
+                      <WastePill wasteType={item.waste_type} />
+                      {item.quantity_severity ? (
+                        <span className="pill">
+                          {severityLabel(item.quantity_severity)}
+                        </span>
+                      ) : null}
+                      <BackendPriorityPill priority={item.priority} />
+                    </div>
+                  </div>
+                  <div className="truncate text-xs muted" data-label="Location">
+                    {item.address_text ??
+                      formatCoordinates(item.latitude, item.longitude) ??
+                      'No location'}
+                  </div>
+                  <div className="text-xs" data-label="Triage">
+                    {triageModeLabel(item.triage_mode)}
+                  </div>
+                  <div className="text-xs muted" data-label="Age">
+                    {formatAge(item.created_at, new Date().toISOString())}
+                  </div>
+                  <div
+                    className="text-right text-sm text-(--accent)"
+                    aria-hidden="true"
                   >
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="mono font-bold">{item.tracking_id}</span>
-                      <BackendStatusPill status={item.status} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="m-0 text-sm">{summary(item)}</p>
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        <BackendPriorityPill priority={item.priority} />
-                        {category ? (
-                          <span className="pill">{category}</span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="text-xs muted" data-label="Department">
-                      {item.department ?? 'Unassigned'}
-                    </div>
-                    <div className="text-xs" data-label="Confidence">
-                      {confidence ?? (
-                        <span className="subtle">Not returned</span>
-                      )}
-                    </div>
-                    <div className="text-xs muted" data-label="Age">
-                      {formatAge(item.created_at, new Date().toISOString())}
-                    </div>
-                    <div
-                      className="text-right text-sm text-(--accent)"
-                      aria-hidden="true"
-                    >
-                      Open →
-                    </div>
-                  </Link>
-                )
-              })
+                    Open →
+                  </div>
+                </Link>
+              ))
             )}
           </div>
         )}

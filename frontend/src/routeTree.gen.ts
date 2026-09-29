@@ -11,10 +11,14 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as CleanerRouteImport } from './routes/cleaner'
 import { Route as SubmitRouteImport } from './routes/submit'
 import { Route as TrackRouteImport } from './routes/track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminEventsRouteImport } from './routes/admin.events'
+import { Route as CleanerIndexRouteImport } from './routes/cleaner.index'
 import { Route as AdminCasesCaseIdRouteImport } from './routes/admin.cases.$caseId'
+import { Route as CleanerTasksTaskIdRouteImport } from './routes/cleaner.tasks.$taskId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -24,6 +28,11 @@ const IndexRoute = IndexRouteImport.update({
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CleanerRoute = CleanerRouteImport.update({
+  id: '/cleaner',
+  path: '/cleaner',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SubmitRoute = SubmitRouteImport.update({
@@ -41,55 +50,103 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminEventsRoute = AdminEventsRouteImport.update({
+  id: '/events',
+  path: '/events',
+  getParentRoute: () => AdminRoute,
+} as any)
+const CleanerIndexRoute = CleanerIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => CleanerRoute,
+} as any)
 const AdminCasesCaseIdRoute = AdminCasesCaseIdRouteImport.update({
   id: '/cases/$caseId',
   path: '/cases/$caseId',
   getParentRoute: () => AdminRoute,
 } as any)
+const CleanerTasksTaskIdRoute = CleanerTasksTaskIdRouteImport.update({
+  id: '/tasks/$taskId',
+  path: '/tasks/$taskId',
+  getParentRoute: () => CleanerRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
+  '/cleaner': typeof CleanerRouteWithChildren
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/events': typeof AdminEventsRoute
   '/admin/': typeof AdminIndexRoute
+  '/cleaner/': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
+  '/cleaner/tasks/$taskId': typeof CleanerTasksTaskIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/events': typeof AdminEventsRoute
   '/admin': typeof AdminIndexRoute
+  '/cleaner': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
+  '/cleaner/tasks/$taskId': typeof CleanerTasksTaskIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
+  '/cleaner': typeof CleanerRouteWithChildren
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/events': typeof AdminEventsRoute
   '/admin/': typeof AdminIndexRoute
+  '/cleaner/': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
+  '/cleaner/tasks/$taskId': typeof CleanerTasksTaskIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/admin' | '/submit' | '/track' | '/admin/' | '/admin/cases/$caseId'
+    | '/'
+    | '/admin'
+    | '/cleaner'
+    | '/submit'
+    | '/track'
+    | '/admin/events'
+    | '/admin/'
+    | '/cleaner/'
+    | '/admin/cases/$caseId'
+    | '/cleaner/tasks/$taskId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/submit' | '/track' | '/admin' | '/admin/cases/$caseId'
+  to:
+    | '/'
+    | '/submit'
+    | '/track'
+    | '/admin/events'
+    | '/admin'
+    | '/cleaner'
+    | '/admin/cases/$caseId'
+    | '/cleaner/tasks/$taskId'
   id:
     | '__root__'
     | '/'
     | '/admin'
+    | '/cleaner'
     | '/submit'
     | '/track'
+    | '/admin/events'
     | '/admin/'
+    | '/cleaner/'
     | '/admin/cases/$caseId'
+    | '/cleaner/tasks/$taskId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
+  CleanerRoute: typeof CleanerRouteWithChildren
   SubmitRoute: typeof SubmitRoute
   TrackRoute: typeof TrackRoute
 }
@@ -108,6 +165,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cleaner': {
+      id: '/cleaner'
+      path: '/cleaner'
+      fullPath: '/cleaner'
+      preLoaderRoute: typeof CleanerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/submit': {
@@ -131,6 +195,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/events': {
+      id: '/admin/events'
+      path: '/events'
+      fullPath: '/admin/events'
+      preLoaderRoute: typeof AdminEventsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/cleaner/': {
+      id: '/cleaner/'
+      path: '/'
+      fullPath: '/cleaner/'
+      preLoaderRoute: typeof CleanerIndexRouteImport
+      parentRoute: typeof CleanerRoute
+    }
     '/admin/cases/$caseId': {
       id: '/admin/cases/$caseId'
       path: '/cases/$caseId'
@@ -138,24 +216,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCasesCaseIdRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/cleaner/tasks/$taskId': {
+      id: '/cleaner/tasks/$taskId'
+      path: '/tasks/$taskId'
+      fullPath: '/cleaner/tasks/$taskId'
+      preLoaderRoute: typeof CleanerTasksTaskIdRouteImport
+      parentRoute: typeof CleanerRoute
+    }
   }
 }
 
 interface AdminRouteChildren {
+  AdminEventsRoute: typeof AdminEventsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCasesCaseIdRoute: typeof AdminCasesCaseIdRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminEventsRoute: AdminEventsRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminCasesCaseIdRoute: AdminCasesCaseIdRoute,
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
+interface CleanerRouteChildren {
+  CleanerIndexRoute: typeof CleanerIndexRoute
+  CleanerTasksTaskIdRoute: typeof CleanerTasksTaskIdRoute
+}
+
+const CleanerRouteChildren: CleanerRouteChildren = {
+  CleanerIndexRoute: CleanerIndexRoute,
+  CleanerTasksTaskIdRoute: CleanerTasksTaskIdRoute,
+}
+
+const CleanerRouteWithChildren =
+  CleanerRoute._addFileChildren(CleanerRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
+  CleanerRoute: CleanerRouteWithChildren,
   SubmitRoute: SubmitRoute,
   TrackRoute: TrackRoute,
 }
