@@ -1,0 +1,17 @@
+Running case 1/6: domestic_trial.jpg... PASS
+Running case 2/6: garbage_dump_trial.jpg... PASS
+Running case 3/6: full_bin.jpeg... PASS
+Running case 4/6: dog.jpeg... PASS
+Running case 5/6: blurry.jpeg... PASS
+Running case 6/6: clean_street.jpg... PASS
+
+============================================================
+WASTE EVALUATION SUMMARY
+============================================================
+Total cases:            6
+Usability accuracy:     6/6 (100.0%)
+Waste-type accuracy:    6/6 (100.0%)
+Severity accuracy:      6/6 (100.0%)
+Escalation accuracy:    6/6 (100.0%)
+
+No failures.

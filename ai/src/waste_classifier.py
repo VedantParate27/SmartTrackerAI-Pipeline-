@@ -20,13 +20,14 @@ client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 # --- Schema: enforced output shape, same philosophy as Classification in classifier.py ---
 
 class WasteClassification(BaseModel):
-    image_usable: bool  # False if blurry, too dark, not a photo of a real scene, or no waste visible
-    unusable_reason: Optional[str] = None  # e.g. "no waste visible", "image too blurry", "not a real photo"
+    image_usable: bool
+    unusable_reason: Optional[str] = None
     waste_type: Literal["wet", "dry", "hazardous", "sanitary", "e_waste", "mixed", "none"]
     waste_type_confidence: float
     severity: Literal["domestic", "moderate", "dump_scale", "none"]
     severity_confidence: float
     reasoning: str
+    follow_up_question: Optional[str] = None  # a single, specific question to ask the user, if useful
 
 
 WASTE_CLASSIFY_PROMPT = """You are an image-based waste classification system for a municipal solid waste management platform. Analyze the uploaded image carefully.
@@ -64,7 +65,12 @@ Context can independently raise the severity level even if the image alone looks
 - If the additional context indicates this is a RECURRING problem (e.g., "this happens every week", "been here for weeks", "keeps coming back"), treat this as equivalent to at least "moderate" severity, since a persistent problem at the same location indicates a systemic issue regardless of how small any single photo looks.
 - If the context describes a genuinely one-time, recent event with no mention of recurrence, rely primarily on the visual evidence.
 - Always mention in your reasoning whether context influenced your severity call, and how.
-- Write the reasoning as a natural explanation for a human reviewer. Do not refer to "instructions," "the platform," or "the prompt" in it."""
+- Write the reasoning as a natural explanation for a human reviewer. Do not refer to "instructions," "the platform," or "the prompt" in it.
+Decide whether a follow-up question would genuinely help resolve uncertainty:
+- If image_usable is false, set follow_up_question to a short, specific instruction for retaking the photo, tailored to the actual problem (e.g., "Please retake the photo in better lighting, making sure the waste is clearly visible" for a blurry/dark image, or "Please upload a photo that clearly shows the waste or garbage you're reporting" if no waste is visible).
+- If image_usable is true but severity_confidence is below 0.6, set follow_up_question to a short, specific question that would help clarify severity (e.g., "Has this been accumulating over time, or is this a one-time occurrence?").
+- If image_usable is true, confidence is reasonably high, and no additional_context was provided, you may still ask a brief, optional clarifying question if it would meaningfully change the outcome (e.g., asking about recurrence at this exact spot) — but do not ask a question just to ask one.
+- If nothing genuinely needs clarifying, set follow_up_question to null. Do not force a question when the situation is already clear."""
 
 def classify_waste_image(image_bytes: bytes, mime_type: str = "image/jpeg", additional_context: str = None) -> dict:
     """
