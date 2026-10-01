@@ -31,3 +31,18 @@ POLICIES_FOLDER = os.path.join(PROJECT_ROOT, "data", "policies")
 # --- Confidence & escalation thresholds ---
 CONFIDENCE_THRESHOLD = 0.6      # below this, flag classification for human review
 RETRIEVAL_RELEVANCE_THRESHOLD = 0.0005   # below this rerank score, treat as "no good policy match"
+
+# --- Waste Management domain ---
+WASTE_TYPES = ["wet", "dry", "hazardous", "sanitary", "e_waste", "mixed", "none"]
+SEVERITY_LEVELS = ["domestic", "moderate", "dump_scale", "none"]
+WASTE_CONFIDENCE_THRESHOLD = 0.6  # same philosophy as CONFIDENCE_THRESHOLD
+
+# --- Waste escalation decision ---
+ESCALATE_SEVERITIES = ["dump_scale"]  # severities that always escalate regardless of history
+RECURRING_REPORT_THRESHOLD = 3  # 3+ prior reports at same location = treat as recurring
+
+# --- Waste guideline storage ---
+WASTE_GUIDELINES_FOLDER = os.path.join(PROJECT_ROOT, "ai", "data", "waste_guidelines")
+
+# --- Cleanup verification ---
+CLEANUP_REVIEW_THRESHOLD = 0.7  # below this confidence requires admin review
