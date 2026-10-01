@@ -63,7 +63,7 @@ function CaseDetailPage() {
         setLoading(false)
       })
   }, [caseId])
-  
+
   if (loading) {
     return <p>Loading case...</p>
   }
@@ -136,6 +136,16 @@ function CaseDetailPage() {
           <div>
             <dt className="kicker">Assigned to</dt>
             <dd className="m-0">{item.assignedDepartment ?? 'Not assigned'}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="kicker">Location</dt>
+            <dd className="m-0 truncate">
+              {item.location?.type === 'gps'
+                ? `${item.location.latitude?.toFixed(5)}, ${item.location.longitude?.toFixed(5)}`
+                : item.location?.type === 'manual'
+                  ? item.location.manualAddress
+                  : 'Not provided'}
+            </dd>
           </div>
           <div>
             <dt className="kicker">Last updated</dt>
@@ -611,19 +621,19 @@ function DraftPanel({
           <form
             className="grid gap-2 border-t border-(--line) pt-4 sm:grid-cols-[1fr_auto] sm:items-end"
             onSubmit={async (event) => {
-  event.preventDefault()
+              event.preventDefault()
 
-  try {
-    await approveComplaint(item.id, {
-      admin_id: 2,
-      final_response: text,
-    })
+              try {
+                await approveComplaint(item.id, {
+                  admin_id: 2,
+                  final_response: text,
+                })
 
-    window.location.reload()
-  } catch (error) {
-    console.error('Failed to approve complaint:', error)
-  }
-}}
+                window.location.reload()
+              } catch (error) {
+                console.error('Failed to approve complaint:', error)
+              }
+            }}
           >
             <div>
               <label className="label" htmlFor="next-status">

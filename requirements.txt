@@ -3,6 +3,10 @@ fastapi
 uvicorn[standard]
 httpx
 pytest
+python-jose
+passlib
+email-validator
+bcrypt==4.0.1
 
 # AI / RAG
 google-genai

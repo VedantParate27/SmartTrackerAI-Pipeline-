@@ -142,6 +142,13 @@ export interface Attachment {
   type: string
 }
 
+export interface ComplaintLocation {
+  type: 'gps' | 'manual'
+  latitude: number | null
+  longitude: number | null
+  manualAddress: string | null
+}
+
 /** Complaint: requester contact, original text, attachments, status, times. */
 export interface Complaint {
   id: string
@@ -157,6 +164,7 @@ export interface Complaint {
   submittedAt: string
   updatedAt: string
   assignedDepartment: string | null
+  location: ComplaintLocation | null
   classification: Classification | null
   entities: ExtractedEntity[]
   evidence: Evidence[]

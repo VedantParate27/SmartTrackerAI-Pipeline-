@@ -4,7 +4,7 @@ import { Callout, Field, SectionCard } from '#/components/ui'
 import { formatBytes } from '#/lib/format'
 import { submitComplaint } from '#/lib/store'
 import { CONFIG, PRIORITIES } from '#/lib/taxonomy'
-import type { Attachment, Priority } from '#/lib/types'
+import type { Attachment, ComplaintLocation, Priority } from '#/lib/types'
 
 export const Route = createFileRoute('/submit')({ component: SubmitPage })
 
@@ -25,6 +25,8 @@ const EMPTY: FormValues = {
 }
 
 const MIN_TEXT = 30
+
+type GpsStatus = 'idle' | 'requesting' | 'granted' | 'denied' | 'unavailable'
 
 /** FR-02: mandatory fields, contact format, attachment type and size. */
 function validate(values: FormValues) {
@@ -94,6 +96,66 @@ function SubmitPage() {
   const [failedAttempts, setFailedAttempts] = useState(0)
   const errorSummary = useRef<HTMLDivElement>(null)
 
+  // Location (Phase 3): GPS preferred, manual address as fallback. Neither
+  // is required — the form must stay usable when GPS is unavailable/denied
+  // and when the reporter simply doesn't have a location to share.
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>('idle')
+  const [gpsCoords, setGpsCoords] = useState<{
+    latitude: number
+    longitude: number
+  } | null>(null)
+  const [manualAddress, setManualAddress] = useState('')
+
+  function requestGpsLocation() {
+    if (!('geolocation' in navigator)) {
+      setGpsStatus('unavailable')
+      return
+    }
+
+    setGpsStatus('requesting')
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setGpsCoords({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        })
+        setGpsStatus('granted')
+      },
+      (error) => {
+        setGpsCoords(null)
+        setGpsStatus(
+          error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable',
+        )
+      },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+    )
+  }
+
+  function clearGpsLocation() {
+    setGpsCoords(null)
+    setGpsStatus('idle')
+  }
+
+  function currentLocation(): ComplaintLocation | null {
+    if (gpsStatus === 'granted' && gpsCoords) {
+      return {
+        type: 'gps',
+        latitude: gpsCoords.latitude,
+        longitude: gpsCoords.longitude,
+        manualAddress: null,
+      }
+    }
+    if (manualAddress.trim()) {
+      return {
+        type: 'manual',
+        latitude: null,
+        longitude: null,
+        manualAddress: manualAddress.trim(),
+      }
+    }
+    return null
+  }
+
   // Focus the summary after a rejected submit, once it has rendered (NFR-10).
   // Keyed on the attempt count so typing a fix never steals focus back.
   useEffect(() => {
@@ -115,33 +177,34 @@ function SubmitPage() {
     setAttachments(accepted)
   }
 
-async function onSubmit(event: React.FormEvent) {
-  event.preventDefault()
-  const found = validate(values)
-  setErrors(found)
+  async function onSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    const found = validate(values)
+    setErrors(found)
 
-  if (Object.keys(found).length > 0) {
-    setFailedAttempts((count) => count + 1)
-    return
+    if (Object.keys(found).length > 0) {
+      setFailedAttempts((count) => count + 1)
+      return
+    }
+
+    try {
+      const complaint = await submitComplaint({
+        requesterName: values.requesterName.trim(),
+        contact: values.contact.trim(),
+        text: values.text.trim(),
+        priority: values.priority,
+        attachments,
+        location: currentLocation(),
+      })
+
+      setSubmittedId(complaint.id)
+    } catch (error) {
+      console.error('Failed to submit complaint:', error)
+      setErrors({
+        text: 'Unable to submit the complaint. Please try again.',
+      })
+    }
   }
-
-  try {
-    const complaint = await submitComplaint({
-      requesterName: values.requesterName.trim(),
-      contact: values.contact.trim(),
-      text: values.text.trim(),
-      priority: values.priority,
-      attachments,
-    })
-
-    setSubmittedId(complaint.id)
-  } catch (error) {
-    console.error('Failed to submit complaint:', error)
-    setErrors({
-      text: 'Unable to submit the complaint. Please try again.',
-    })
-  }
-}
 
   if (submittedId) {
     return (
@@ -202,6 +265,8 @@ async function onSubmit(event: React.FormEvent) {
               setFileProblems([])
               setSubmittedId(null)
               setFailedAttempts(0)
+              clearGpsLocation()
+              setManualAddress('')
             }}
           >
             Submit another grievance
@@ -311,6 +376,69 @@ async function onSubmit(event: React.FormEvent) {
             placeholder="Example: My salary was deducted last month without notice. Rs. 4,250 is missing from my payslip and my employee ID is EMP-20418."
             onChange={(event) => update('text', event.target.value)}
           />
+        </Field>
+
+        <Field
+          label="Location"
+          htmlFor="manualAddress"
+          hint="Optional, but helps route the case to the right area. Share your current location or type an address."
+        >
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="btn"
+                onClick={requestGpsLocation}
+                disabled={gpsStatus === 'requesting'}
+              >
+                {gpsStatus === 'requesting'
+                  ? 'Getting your location…'
+                  : gpsStatus === 'granted'
+                    ? 'Location shared'
+                    : 'Share my current location'}
+              </button>
+              {gpsStatus === 'granted' ? (
+                <button
+                  type="button"
+                  className="btn btn-quiet"
+                  onClick={clearGpsLocation}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+
+            {gpsStatus === 'granted' && gpsCoords ? (
+              <p className="hint">
+                Using your current location ({gpsCoords.latitude.toFixed(5)},{' '}
+                {gpsCoords.longitude.toFixed(5)}).
+              </p>
+            ) : null}
+
+            {gpsStatus === 'denied' ? (
+              <Callout tone="warn" title="Location permission denied">
+                You can still type an address below instead.
+              </Callout>
+            ) : null}
+
+            {gpsStatus === 'unavailable' ? (
+              <Callout tone="warn" title="Location unavailable">
+                Your browser or device could not provide a location. Type an
+                address below instead.
+              </Callout>
+            ) : null}
+
+            {gpsStatus !== 'granted' ? (
+              <input
+                id="manualAddress"
+                name="manualAddress"
+                className="input"
+                placeholder="e.g. Near 5th Cross Road, Indiranagar"
+                value={manualAddress}
+                onChange={(event) => setManualAddress(event.target.value)}
+              />
+            ) : null}
+          </div>
         </Field>
 
         <Field label="How urgent is it?" htmlFor="priority">

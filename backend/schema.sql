@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS complaints (
     department          TEXT,
     confidence_score    REAL,
     extracted_entities  TEXT,           -- JSON string, e.g. {"order_id":"ORD123"}
+    latitude            REAL,
+    longitude           REAL,
+    location_type       TEXT CHECK (location_type IN ('gps','manual')),
+    manual_address      TEXT,
     status              TEXT NOT NULL DEFAULT 'submitted'
                          CHECK (status IN ('submitted','processing','awaiting_review','resolved')),
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

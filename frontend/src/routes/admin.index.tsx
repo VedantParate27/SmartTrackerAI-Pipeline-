@@ -32,7 +32,7 @@ function QueuePage() {
   const { session, now } = useAppState()
   const [backendCases, setBackendCases] = useState<Complaint[]>([])
 
-    useEffect(() => {
+  useEffect(() => {
     getAdminQueue()
       .then((items) => {
         const mapped: Complaint[] = items.map((item) => ({
@@ -45,12 +45,19 @@ function QueuePage() {
           attachments: [],
           priority: 'Medium',
           status:
-            item.status === 'awaiting_review'
-              ? 'Pending Review'
-              : 'Submitted',
+            item.status === 'awaiting_review' ? 'Pending Review' : 'Submitted',
           submittedAt: item.created_at,
           updatedAt: item.updated_at,
           assignedDepartment: item.department,
+          location:
+            item.location_type != null
+              ? {
+                  type: item.location_type,
+                  latitude: item.latitude,
+                  longitude: item.longitude,
+                  manualAddress: item.manual_address,
+                }
+              : null,
           classification: item.category
             ? {
                 intent: item.category,
@@ -90,8 +97,8 @@ function QueuePage() {
     useState<(typeof CONFIDENCE_OPTIONS)[number]['value']>('any')
 
   const permitted = useMemo(
-  () => backendCases.filter((item) => isVisible(item, session)),
-  [backendCases, session],
+    () => backendCases.filter((item) => isVisible(item, session)),
+    [backendCases, session],
   )
 
   const stats = useMemo(

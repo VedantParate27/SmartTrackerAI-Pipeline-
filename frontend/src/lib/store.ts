@@ -8,6 +8,7 @@ import type {
   AuditEvent,
   CaseStatus,
   Complaint,
+  ComplaintLocation,
   IngestionReport,
   PolicyDocument,
   Priority,
@@ -107,6 +108,7 @@ function buildSeedState(): AppState {
       submittedAt: seed.submittedAt,
       updatedAt: seed.submittedAt,
       assignedDepartment: null,
+      location: null,
       classification: analysis.classification,
       entities: analysis.entities,
       evidence: analysis.evidence,
@@ -312,6 +314,7 @@ export interface SubmitInput {
   text: string
   priority: Priority
   attachments: Attachment[]
+  location: ComplaintLocation | null
 }
 
 /** UC-01 / FR-01 to FR-05. Returns the tracking id immediately. */
@@ -319,6 +322,10 @@ export async function submitComplaint(input: SubmitInput): Promise<Complaint> {
   const complaint = await createComplaint({
     user_id: 1,
     complaint_text: input.text,
+    latitude: input.location?.latitude ?? null,
+    longitude: input.location?.longitude ?? null,
+    location_type: input.location?.type ?? null,
+    manual_address: input.location?.manualAddress ?? null,
   })
 
   // Process the complaint through the real FastAPI + AI pipeline.

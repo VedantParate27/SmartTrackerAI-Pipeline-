@@ -19,6 +19,10 @@ export interface BackendComplaint {
   confidence_score: number | null
   ai_draft_response: string | null
   extracted_entities: string | null
+  latitude: number | null
+  longitude: number | null
+  location_type: 'gps' | 'manual' | null
+  manual_address: string | null
   status: string
   created_at: string
   updated_at: string
@@ -27,6 +31,10 @@ export interface BackendComplaint {
 export interface CreateComplaintPayload {
   user_id: number
   complaint_text: string
+  latitude?: number | null
+  longitude?: number | null
+  location_type?: 'gps' | 'manual' | null
+  manual_address?: string | null
 }
 
 export interface ApprovalPayload {
@@ -47,18 +55,13 @@ function errorMessage(status: number, body: unknown): string {
   return `API request failed (${status})`
 }
 
-async function request<T>(
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     signal: init?.signal ?? AbortSignal.timeout(120_000),
     headers: {
       Accept: 'application/json',
-      ...(init?.body
-        ? { 'Content-Type': 'application/json' }
-        : {}),
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
   })
@@ -146,11 +149,7 @@ function mapEntities(raw: string | null): ExtractedEntity[] {
 }
 
 function mapPriority(status: string): Priority {
-  return status === 'high'
-    ? 'High'
-    : status === 'low'
-      ? 'Low'
-      : 'Medium'
+  return status === 'high' ? 'High' : status === 'low' ? 'Low' : 'Medium'
 }
 
 function mapComplaint(row: BackendComplaint): Complaint {
@@ -188,6 +187,16 @@ function mapComplaint(row: BackendComplaint): Complaint {
 
     assignedDepartment: row.department,
 
+    location:
+      row.location_type != null
+        ? {
+            type: row.location_type,
+            latitude: row.latitude,
+            longitude: row.longitude,
+            manualAddress: row.manual_address,
+          }
+        : null,
+
     classification,
 
     entities: mapEntities(row.extracted_entities),
@@ -195,15 +204,15 @@ function mapComplaint(row: BackendComplaint): Complaint {
     evidence: [],
 
     aiDraft: row.ai_draft_response
-  ? {
-      text: row.ai_draft_response,
-      evidenceIds: [],
-      generationModel: 'Gemini',
-      grounding: 'Passed',
-      groundingNotes: [],
-      createdAt: row.updated_at,
-    }
-  : null,
+      ? {
+          text: row.ai_draft_response,
+          evidenceIds: [],
+          generationModel: 'Gemini',
+          grounding: 'Passed',
+          groundingNotes: [],
+          createdAt: row.updated_at,
+        }
+      : null,
 
     editedDraft: null,
 
@@ -243,12 +252,8 @@ export async function processComplaint(
   return mapComplaint(result)
 }
 
-export async function getComplaint(
-  complaintId: string,
-): Promise<Complaint> {
-  const result = await request<BackendComplaint>(
-    `/complaints/${complaintId}`,
-  )
+export async function getComplaint(complaintId: string): Promise<Complaint> {
+  const result = await request<BackendComplaint>(`/complaints/${complaintId}`)
 
   return mapComplaint(result)
 }
@@ -263,6 +268,10 @@ export interface AdminQueueItem {
   department: string | null
   confidence_score: number | null
   extracted_entities: string | null
+  latitude: number | null
+  longitude: number | null
+  location_type: 'gps' | 'manual' | null
+  manual_address: string | null
   status: string
   created_at: string
   updated_at: string
