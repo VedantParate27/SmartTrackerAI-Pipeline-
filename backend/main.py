@@ -18,6 +18,7 @@ from auth import (
     TokenResponse,
     register_user,
     login_user,
+    get_current_user,
 )
 
 app = FastAPI(title="SmartTracker AI")
@@ -35,7 +36,6 @@ app.add_middleware(
 # ---------- request/response models ----------
 
 class ComplaintCreate(BaseModel):
-    user_id: int
     complaint_text: str
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -60,6 +60,7 @@ class ComplaintCreate(BaseModel):
 
 class ComplaintOut(BaseModel):
     id: int
+    tracking_id: str
     user_id: int
     complaint_text: str
     category: Optional[str]
@@ -99,14 +100,12 @@ def login(payload: LoginRequest, conn=Depends(get_conn)):
 # ---------- customer: submit a complaint ----------
 
 @app.post("/complaints", response_model=ComplaintOut, status_code=201)
-def submit_complaint(payload: ComplaintCreate, conn=Depends(get_conn)):
-    user = conn.execute(
-        "SELECT id, name, email FROM users WHERE id = ?",
-        (payload.user_id,),
-    ).fetchone()
-
-    if not user:
-        raise HTTPException(404, "user_id does not exist")
+def submit_complaint(
+    payload: ComplaintCreate,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    user_id = current_user["id"]
 
     tracking_id = f"TRK-{uuid.uuid4().hex[:8]}"
 
@@ -125,9 +124,9 @@ def submit_complaint(payload: ComplaintCreate, conn=Depends(get_conn)):
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             tracking_id,
-            payload.user_id,
-            user["name"],
-            user["email"],
+            user_id,
+            current_user["name"],
+            current_user["email"],
             payload.complaint_text,
             payload.latitude,
             payload.longitude,
