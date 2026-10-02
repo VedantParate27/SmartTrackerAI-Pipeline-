@@ -7,3 +7,6 @@ chroma_db/
 
 # Uploaded proof images
 backend/uploads/*.jpg
+
+# Runtime-generated upload files
+backend/uploads/
