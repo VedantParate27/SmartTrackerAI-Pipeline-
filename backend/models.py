@@ -8,6 +8,10 @@
 #   * AICorrection  — admin corrections of AI predictions (human-in-the-loop evidence)
 #   * EventLog      — actor-attributed lifecycle event log (process-mining input)
 #   * Complaint     — new research/DWM columns (triage_mode, review flags, resolved_at, source)
+#
+# Waste-AI integration (contract: branch waste-image-classification):
+#   * WasteAIResult — ONE advisory waste-image AI analysis attempt per row (append-only)
+#   * CleanupProof  — extended with ai_* advisory verification fields (verify_cleanup())
 
 import uuid
 from datetime import datetime, timezone
@@ -131,6 +135,14 @@ class Complaint(Base):
     # --- Relationships ---
     owner = relationship("User", back_populates="complaints")
     cleanup_task = relationship("CleanupTask", back_populates="complaint", uselist=False)
+    # Waste-AI analysis history: append-only, one row per analysis attempt
+    # (re-uploads / re-runs add rows; nothing is ever overwritten).
+    waste_ai_results = relationship(
+        "WasteAIResult",
+        back_populates="complaint",
+        order_by="WasteAIResult.created_at",
+        cascade="all, delete-orphan",
+    )
     ai_outputs = relationship(
         "AIOutput",
         back_populates="complaint",
@@ -253,12 +265,101 @@ class CleanupProof(Base):
     verified_at = Column(DateTime(timezone=True), nullable=True)
     rejection_reason = Column(Text, nullable=True)
 
+    # -----------------------------------------------------------------------
+    # Waste-AI advisory verification fields (verify_cleanup() contract).
+    # ADVISORY ONLY: the AI never approves or rejects a proof. The human
+    # verification workflow (verification_status / verified_by / verified_at /
+    # rejection_reason above) remains the single source of truth.
+    # -----------------------------------------------------------------------
+    before_image_url = Column(String(500), nullable=True)   # complaint image used as "before"
+    ai_after_image_usable = Column(Boolean, nullable=True)
+    ai_unusable_reason = Column(Text, nullable=True)
+    ai_cleanup_appears_complete = Column(Boolean, nullable=True)
+    ai_confidence = Column(Float, nullable=True)
+    ai_reasoning = Column(Text, nullable=True)
+    ai_admin_review_recommended = Column(Boolean, nullable=True)
+    ai_processed_at = Column(DateTime(timezone=True), nullable=True)
+    ai_errors_json = Column(Text, nullable=True)
+
     task = relationship("CleanupTask", back_populates="proofs")
     uploader = relationship("User", foreign_keys=[uploaded_by])
     verifier = relationship("User", foreign_keys=[verified_by])
 
     def __repr__(self):
         return f"<CleanupProof id={self.id} task_id={self.task_id} status={self.verification_status!r}>"
+
+
+# ---------------------------------------------------------------------------
+# MODEL 6b — WasteAIResult  (NEW — waste-AI analysis results)
+# ---------------------------------------------------------------------------
+# One row per waste-image AI analysis attempt (append-only). Re-uploading an
+# image or re-running the AI creates a NEW row; history is never overwritten.
+#
+# Contract source: branch waste-image-classification, process_waste_image()
+# (ai/src/waste_pipeline.py). AI vocabulary is stored VERBATIM:
+#   waste_type: wet | dry | hazardous | sanitary | e_waste | mixed | none
+#   severity:   domestic | moderate | dump_scale | none
+# The backend does NOT remap these to the legacy complaint taxonomy.
+# All prediction fields are nullable so a row can exist in "pending" or
+# "failed" state before/without AI output.
+class WasteAIResult(Base):
+    __tablename__ = "waste_ai_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=False, index=True)
+
+    # --- Processing state (backend-managed) ---
+    # pending | completed | failed
+    ai_status = Column(String(20), nullable=False, default="pending")
+
+    # --- Analyzed image ---
+    image_url = Column(String(500), nullable=True)
+    image_mime_type = Column(String(50), nullable=True)
+
+    # --- Image usability gate ---
+    image_usable = Column(Boolean, nullable=True)
+    unusable_reason = Column(Text, nullable=True)
+
+    # --- Predictions (AI vocabulary stored verbatim) ---
+    waste_type = Column(String(20), nullable=True)
+    waste_type_confidence = Column(Float, nullable=True)
+    severity = Column(String(20), nullable=True)
+    severity_confidence = Column(Float, nullable=True)
+    reasoning = Column(Text, nullable=True)
+    follow_up_question = Column(Text, nullable=True)
+
+    # --- Location recurrence inputs/outputs (backend computed the count) ---
+    recurring_flag = Column(Boolean, nullable=True, default=False)
+    prior_reports_count = Column(Integer, nullable=True)
+    radius_m = Column(Integer, nullable=True)
+
+    # --- Workflow decision (advisory) ---
+    escalate_to_authority = Column(Boolean, nullable=True, default=False)
+
+    # --- Human-review flagging (orthogonal to escalation) ---
+    needs_human_review = Column(Boolean, nullable=True, default=False)
+    review_reasons_json = Column(Text, nullable=True)
+
+    # --- Grounded disposal guidance (non-escalated cases only) ---
+    disposal_guidance = Column(Text, nullable=True)
+
+    # --- Diagnostics ---
+    errors_json = Column(Text, nullable=True)
+
+    # --- Provenance (the AI supplies neither name nor version; the adapter stamps these) ---
+    model_name = Column(String(100), nullable=True)
+    model_version = Column(String(50), nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    complaint = relationship("Complaint", back_populates="waste_ai_results")
+
+    def __repr__(self):
+        return (
+            f"<WasteAIResult id={self.id} complaint_id={self.complaint_id} "
+            f"status={self.ai_status!r} waste_type={self.waste_type!r} severity={self.severity!r}>"
+        )
 
 
 # ---------------------------------------------------------------------------

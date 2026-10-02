@@ -10,6 +10,11 @@
 #
 # Phase-3 additions: taxonomy-validated waste fields, AIDecisionRequest,
 # and admin-facing research schemas (AI output, corrections, decision state).
+#
+# Waste-AI integration (contract: branch waste-image-classification):
+# WasteAIResultResponse / CleanupProofAIFields — advisory waste-image AI
+# analysis data. AI vocabulary is exposed verbatim (wet/dry/hazardous/
+# sanitary/e_waste/mixed/none; domestic/moderate/dump_scale/none).
 
 from typing import List, Literal, Optional
 
@@ -225,6 +230,11 @@ class ComplaintResponse(BaseModel):
     review_reason: Optional[str] = Field(default=None, description="Why review was required (low_confidence | hazardous_waste | missing_prediction)")
     resolved_at: Optional[str] = Field(default=None, description="ISO 8601 timestamp when the complaint was resolved")
     source: str = Field(default="citizen", description="Origin of the complaint: citizen (real) | seed (synthetic research data)")
+
+    # Waste-AI integration: status of the latest waste-image AI analysis
+    # (pending | completed | failed | null = no analysis ever ran).
+    # Full AI data is served by GET /complaints/{tracking_id}/ai-analysis.
+    ai_status: Optional[str] = Field(default=None, description="Latest waste-AI analysis status: pending | completed | failed | null")
 
     created_at: str = Field(
         ...,
@@ -543,3 +553,202 @@ class AIDecisionResponse(BaseModel):
     corrections_recorded: int          # fields where human != AI (true corrections)
     acceptance_rate_fields: int        # fields with AI output that were accepted
     resolved_at: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 12 — WASTE-AI ANALYSIS RESULT  (NEW, waste-AI integration)
+# ---------------------------------------------------------------------------
+# One row = one process_waste_image() attempt (append-only history per
+# complaint). AI vocabulary is stored and returned VERBATIM — the backend
+# does NOT remap sanitary/mixed or domestic/moderate/dump_scale.
+class WasteAIResultResponse(BaseModel):
+    """Advisory waste-image AI analysis for one complaint."""
+
+    id: int = Field(..., description="Database ID of this analysis attempt")
+    complaint_id: int = Field(..., description="Internal complaint ID the analysis belongs to")
+    created_at: str = Field(..., description="ISO 8601 timestamp of the analysis attempt")
+
+    ai_status: str = Field(
+        ...,
+        description='Processing state: "pending" | "completed" | "failed"',
+    )
+
+    image_url: Optional[str] = Field(default=None, description="URL of the analyzed image")
+    image_mime_type: Optional[str] = Field(default=None, description="MIME type of the analyzed image")
+
+    image_usable: Optional[bool] = Field(
+        default=None,
+        description="Whether the AI deemed the image usable for classification",
+    )
+    unusable_reason: Optional[str] = Field(
+        default=None,
+        description="Why the image was rejected (blurry, no waste, non-photo)",
+    )
+
+    # AI vocabulary verbatim: wet | dry | hazardous | sanitary | e_waste | mixed | none
+    waste_type: Optional[str] = Field(
+        default=None,
+        description="AI waste type (verbatim AI vocabulary, not remapped)",
+    )
+    waste_type_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="AI confidence for the waste type (0.0-1.0)",
+    )
+
+    # AI vocabulary verbatim: domestic | moderate | dump_scale | none
+    severity: Optional[str] = Field(
+        default=None,
+        description="AI severity/scale judgment (verbatim AI vocabulary, not remapped)",
+    )
+    severity_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="AI confidence for the severity (0.0-1.0)",
+    )
+
+    reasoning: Optional[str] = Field(
+        default=None,
+        description="Natural-language visual justification from the AI",
+    )
+    follow_up_question: Optional[str] = Field(
+        default=None,
+        description="Single follow-up question the AI suggests asking the citizen",
+    )
+
+    recurring_flag: Optional[bool] = Field(
+        default=None,
+        description="Whether prior reports at this location met the recurrence threshold",
+    )
+    prior_reports_count: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Number of prior reports within the radius (backend-computed)",
+    )
+    radius_m: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Radius in meters used for the recurrence count",
+    )
+
+    escalate_to_authority: Optional[bool] = Field(
+        default=None,
+        description="AI advisory escalation decision (dump_scale OR recurring)",
+    )
+
+    needs_human_review: Optional[bool] = Field(
+        default=None,
+        description="Whether the AI flagged this analysis for mandatory human review",
+    )
+    review_reasons_json: Optional[str] = Field(
+        default=None,
+        description="JSON array of human-review reasons from the AI",
+    )
+
+    disposal_guidance: Optional[str] = Field(
+        default=None,
+        description="Grounded disposal guidance (non-escalated usable cases only)",
+    )
+
+    errors_json: Optional[str] = Field(
+        default=None,
+        description="JSON array of stage errors from the AI run",
+    )
+
+    model_name: Optional[str] = Field(
+        default=None,
+        description="Model/service identifier stamped by the backend adapter",
+    )
+    model_version: Optional[str] = Field(
+        default=None,
+        description="Model/version identifier stamped by the backend adapter",
+    )
+    latency_ms: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="End-to-end AI invocation latency in milliseconds",
+    )
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def serialise_result_created_at(cls, value):
+        """Convert datetime → ISO 8601 string if it isn't already a string."""
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 13 — CLEANUP-PROOF AI VERIFICATION FIELDS  (NEW, waste-AI integration)
+# ---------------------------------------------------------------------------
+class CleanupProofAIFields(BaseModel):
+    """Advisory verify_cleanup() result stored on a cleanup proof.
+
+    These fields NEVER approve or reject a proof — the human verification
+    workflow (verification_status / verified_by / verified_at) stays the
+    single source of truth. All fields are nullable: proofs uploaded while
+    the AI is unavailable or without a complaint "before" image simply
+    have no AI data.
+    """
+
+    before_image_url: Optional[str] = Field(
+        default=None,
+        description="Complaint image used as the BEFORE reference for comparison",
+    )
+    ai_after_image_usable: Optional[bool] = Field(
+        default=None,
+        description="Whether the AI deemed the AFTER image usable for comparison",
+    )
+    ai_unusable_reason: Optional[str] = Field(
+        default=None,
+        description="Why the AFTER image was rejected for comparison",
+    )
+    ai_cleanup_appears_complete: Optional[bool] = Field(
+        default=None,
+        description="AI judgment that the waste in the BEFORE image is gone",
+    )
+    ai_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="AI confidence in the cleanup comparison (0.0-1.0)",
+    )
+    ai_reasoning: Optional[str] = Field(
+        default=None,
+        description="Natural-language before/after comparison reasoning from the AI",
+    )
+    ai_admin_review_recommended: Optional[bool] = Field(
+        default=None,
+        description="AI recommendation for the admin to scrutinize this proof",
+    )
+    ai_processed_at: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 timestamp of the AI verification run",
+    )
+    ai_errors_json: Optional[str] = Field(
+        default=None,
+        description="JSON array of AI invocation errors, if any",
+    )
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+    @field_validator("ai_processed_at", mode="before")
+    @classmethod
+    def serialise_ai_processed_at(cls, value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
