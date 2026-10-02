@@ -4,6 +4,7 @@ Run: uvicorn main:app --reload
 """
 from datetime import datetime
 from typing import Optional
+import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -100,17 +101,33 @@ def login(payload: LoginRequest, conn=Depends(get_conn)):
 @app.post("/complaints", response_model=ComplaintOut, status_code=201)
 def submit_complaint(payload: ComplaintCreate, conn=Depends(get_conn)):
     user = conn.execute(
-        "SELECT id FROM users WHERE id = ?", (payload.user_id,)
+        "SELECT id, name, email FROM users WHERE id = ?",
+        (payload.user_id,),
     ).fetchone()
+
     if not user:
         raise HTTPException(404, "user_id does not exist")
 
+    tracking_id = f"TRK-{uuid.uuid4().hex[:8]}"
+
     cur = conn.execute(
-        """INSERT INTO complaints
-               (user_id, complaint_text, latitude, longitude, location_type, manual_address)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO complaints (
+               tracking_id,
+               user_id,
+               name,
+               email,
+               complaint_text,
+               latitude,
+               longitude,
+               location_type,
+               manual_address
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
+            tracking_id,
             payload.user_id,
+            user["name"],
+            user["email"],
             payload.complaint_text,
             payload.latitude,
             payload.longitude,
@@ -118,7 +135,9 @@ def submit_complaint(payload: ComplaintCreate, conn=Depends(get_conn)):
             payload.manual_address,
         ),
     )
+
     conn.commit()
+
     complaint_id = cur.lastrowid
     return _get_complaint_row(conn, complaint_id)
 
