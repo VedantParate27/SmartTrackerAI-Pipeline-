@@ -43,7 +43,9 @@ from schemas import (
     AdminDecisionRequest,
     AdminDecisionResult,
     AdminDecisionSummary,
+    AdminProofReviewResponse,
     CleanupTaskHandoff,
+    ProofReviewItem,
     WasteAIResultResponse,
 )
 
@@ -665,6 +667,7 @@ def verify_proof(
         task.completed_at = now
 
         next_comp_status = body.next_status or "resolved"
+        old_complaint_status = complaint.status
         if complaint.status != next_comp_status:
             validate_status_transition(complaint.status, next_comp_status)
             complaint.status = next_comp_status
@@ -680,6 +683,20 @@ def verify_proof(
             new_value="verified",
             meta={"proof_id": proof.id, "complaint_status": complaint.status},
         )
+        # Separate lifecycle event (same convention as the ai-decision path):
+        # the complaint resolution itself, attributed to the verifying admin.
+        if complaint.status != old_complaint_status:
+            log_event(
+                db,
+                case_id=complaint.tracking_id,
+                activity=("complaint_resolved" if complaint.status == "resolved"
+                          else "complaint_closed"),
+                actor_id=current_user.id,
+                actor_role="admin",
+                old_value=old_complaint_status,
+                new_value=complaint.status,
+                meta={"proof_id": proof.id},
+            )
     else:
         proof.verification_status = "rejected"
         proof.rejection_reason = body.rejection_reason
@@ -966,4 +983,69 @@ def record_admin_decision(
         ),
         ai_status=ai_status,
     )
+
+
+# ===========================================================================
+# WASTE-AI: ADMIN CLEANUP-PROOF REVIEW  (Step 7 — "AI assists, admin decides")
+# ===========================================================================
+def _parse_ai_errors(raw: Optional[str]) -> Optional[list]:
+    """Parse a stored ai_errors_json array safely (never leaks a stack trace)."""
+    if raw is None or raw == "":
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return [str(raw)]
+    if isinstance(parsed, list):
+        return parsed
+    return [parsed]
+
+
+def _proof_review_item(proof: CleanupProof) -> dict:
+    """Serialize one CleanupProof for the admin review (AI errors parsed)."""
+    from schemas import CleanupProofAIFields
+
+    item = ProofReviewItem.model_validate(proof).model_dump(mode="json")
+    item["ai_errors"] = _parse_ai_errors(proof.ai_errors_json)
+    return item
+
+
+@router.get(
+    "/tasks/{task_id}/proof",
+    response_model=AdminProofReviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Review a cleanup task's proof history with advisory AI results",
+)
+def get_task_proof_review(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Admin-only review view for final cleanup verification.
+
+    Returns the complaint, the task, and ALL proof attempts (append-only
+    history, oldest first), each with its advisory AI verification data.
+    The AI fields NEVER constitute the admin decision — verification/rejection
+    stays with POST /admin/proofs/{proof_id}/verify (human-only, authoritative).
+    """
+    task = db.query(CleanupTask).filter(CleanupTask.task_id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+
+    complaint = task.complaint
+    return {
+        "task_id": task.task_id,
+        "task_status": task.status,
+        "task_assigned_cleaner_id": task.assigned_cleaner_id,
+        "assigned_at": task.assigned_at,
+        "completed_at": task.completed_at,
+        "complaint_id": complaint.id,
+        "tracking_id": complaint.tracking_id,
+        "complaint_text": complaint.complaint_text,
+        "complaint_status": complaint.status,
+        "latitude": complaint.latitude,
+        "longitude": complaint.longitude,
+        "address_text": complaint.address_text,
+        "proofs": [_proof_review_item(p) for p in task.proofs],
+    }
 

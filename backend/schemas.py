@@ -876,3 +876,81 @@ class CleanupProofAIFields(BaseModel):
         if hasattr(value, "isoformat"):
             return value.isoformat()
         return str(value)
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 13b — ADMIN CLEANUP-PROOF REVIEW  (NEW, waste-AI integration)
+# ---------------------------------------------------------------------------
+class ProofReviewItem(BaseModel):
+    """One CleanupProof as seen in the admin review (AI fields advisory)."""
+
+    id: int
+    image_url: str
+    before_image_url: Optional[str] = None
+    uploaded_by: int
+    uploaded_at: str
+    verification_status: str
+    verified_by: Optional[int] = None
+    verified_at: Optional[str] = None
+    rejection_reason: Optional[str] = None
+
+    # Advisory AI verification data (never the admin decision):
+    ai_after_image_usable: Optional[bool] = None
+    ai_unusable_reason: Optional[str] = None
+    ai_cleanup_appears_complete: Optional[bool] = None
+    ai_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    ai_reasoning: Optional[str] = None
+    ai_admin_review_recommended: Optional[bool] = None
+    ai_processed_at: Optional[str] = None
+    ai_errors: Optional[List[Any]] = Field(
+        default=None,
+        description="AI invocation errors (parsed from ai_errors_json); never a stack trace",
+    )
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+    @field_validator("uploaded_at", "verified_at", "ai_processed_at", mode="before")
+    @classmethod
+    def serialise_proof_review_timestamps(cls, value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+class AdminProofReviewResponse(BaseModel):
+    """Admin review view: complaint + task + full proof history for one task."""
+
+    task_id: str
+    task_status: str
+    task_assigned_cleaner_id: Optional[int] = None
+    assigned_at: str
+    completed_at: Optional[str] = None
+
+    complaint_id: int
+    tracking_id: str
+    complaint_text: str
+    complaint_status: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address_text: Optional[str] = None
+
+    proofs: List[ProofReviewItem] = Field(
+        default_factory=list,
+        description="All proof attempts, oldest first (history is append-only)",
+    )
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("assigned_at", "completed_at", mode="before")
+    @classmethod
+    def serialise_task_review_timestamps(cls, value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)

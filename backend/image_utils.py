@@ -86,3 +86,23 @@ def store_complaint_image(data: bytes, sniffed_ext: str) -> tuple[str, str]:
     (COMPLAINT_IMAGE_DIR / filename).write_bytes(data)
     image_url = f"/uploads/complaints/{filename}"
     return image_url, EXT_TO_MIME[sniffed_ext]
+
+
+# ---------------------------------------------------------------------------
+# Cleaner AFTER-cleanup proof images (Step 6)
+# ---------------------------------------------------------------------------
+# Reuse the exact same validation rules as citizen images (same MIME set,
+# same magic-byte sniffing, same 8 MB cap) and the same /uploads static-mount
+# convention. Proofs keep their own uploads/proof_<uuid>.<ext> namespace —
+# existing proof files are never renamed or moved.
+def store_proof_image(data: bytes, sniffed_ext: str) -> tuple[str, str]:
+    """Persist one cleaner proof image with a UUID name (uploads/proof_<uuid>.<ext>).
+
+    Returns (image_url, mime_type). Caller must have validated the data with
+    validate_image_upload first.
+    """
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"proof_{uuid.uuid4().hex}.{sniffed_ext}"
+    (UPLOADS_DIR / filename).write_bytes(data)
+    image_url = f"/uploads/{filename}"
+    return image_url, EXT_TO_MIME[sniffed_ext]

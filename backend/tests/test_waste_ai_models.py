@@ -28,6 +28,9 @@ from test_app_state import TestingSessionLocal, client, engine  # noqa: E402
 
 from models import CleanupProof, CleanupTask, Complaint, User, WasteAIResult  # noqa: E402
 
+# Step-6 proof uploads are magic-byte validated; test payloads use a real JPEG head.
+JPEG_HEAD = b"\xff\xd8\xff\xe0" + b"\x00" * 16
+
 AI_RESULT_COLUMNS = {
     "id", "complaint_id", "created_at", "ai_status",
     "image_url", "image_mime_type",
@@ -291,11 +294,11 @@ def test_existing_human_proof_verification_unaffected_by_ai_fields():
     assert tasks.status_code == 200
     task_id = tasks.json()[0]["task_id"]
 
-    # Cleaner uploads an AFTER image
+    # Cleaner uploads an AFTER image (magic-byte validated since Step 6)
     upload = client.post(
         f"/cleaner/tasks/{task_id}/proof",
         headers=cleaner_headers,
-        files={"file": ("after.jpg", io.BytesIO(b"after image bytes"), "image/jpeg")},
+        files={"file": ("after.jpg", io.BytesIO(JPEG_HEAD), "image/jpeg")},
     )
     assert upload.status_code == 201
     proof_id = upload.json()["id"]
@@ -328,19 +331,14 @@ def test_existing_human_proof_verification_unaffected_by_ai_fields():
         assert row.verified_by == admin_id
         assert row.ai_confidence is None               # AI fields still advisory/empty
 
-    # And the reject path still works too
+    # A verified task is terminal: no further proof can be submitted (Step-6
+    # state guard). The reject path is covered by the workflow suites.
     upload2 = client.post(
         f"/cleaner/tasks/{task_id}/proof",
         headers=cleaner_headers,
-        files={"file": ("after2.jpg", io.BytesIO(b"second attempt"), "image/jpeg")},
+        files={"file": ("after2.jpg", io.BytesIO(JPEG_HEAD), "image/jpeg")},
     )
-    assert upload2.status_code == 201
-    proof2 = upload2.json()["id"]
-    rejected = client.post(f"/admin/proofs/{proof2}/verify", headers=admin_headers, json={
-        "approved": False, "rejection_reason": "Waste still visible.",
-    })
-    assert rejected.status_code == 200
-    assert rejected.json()["verification_status"] == "rejected"
+    assert upload2.status_code == 400
 
 
 # ---------------------------------------------------------------------------

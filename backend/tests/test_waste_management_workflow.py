@@ -14,6 +14,9 @@ if str(BACKEND_DIR) not in sys.path:
 from test_app_state import TestingSessionLocal, app, client  # noqa: E402
 from models import User, Complaint, CleanupTask, CleanupProof  # noqa: E402
 
+# Step-6 proof uploads are magic-byte validated; test payloads use a real JPEG head.
+JPEG_HEAD = b"\xff\xd8\xff\xe0" + b"\x00" * 16
+
 
 
 def test_full_waste_management_end_to_end_workflow():
@@ -129,7 +132,8 @@ def test_full_waste_management_end_to_end_workflow():
     assert task_detail.json()["waste_type"] == "e_waste"
 
     # 7. Cleaner uploads cleanup proof photo
-    dummy_image = io.BytesIO(b"fake image bytes")
+    # (Step-6 proof uploads are magic-byte validated: real JPEG head required)
+    dummy_image = io.BytesIO(JPEG_HEAD)
     files = {"file": ("proof_photo.jpg", dummy_image, "image/jpeg")}
     upload_res = client.post(
         f"/cleaner/tasks/{task_id}/proof",
@@ -239,7 +243,7 @@ def test_proof_rejection_and_resubmission_flow():
     task_id = assign["task_id"]
 
     # 3. Cleaner uploads Proof 1
-    file1 = {"file": ("proof1.jpg", io.BytesIO(b"blurry image"), "image/jpeg")}
+    file1 = {"file": ("proof1.jpg", io.BytesIO(JPEG_HEAD), "image/jpeg")}
     upload1 = client.post(f"/cleaner/tasks/{task_id}/proof", headers=clean_headers, files=file1).json()
     proof1_id = upload1["id"]
 
@@ -255,7 +259,7 @@ def test_proof_rejection_and_resubmission_flow():
     assert rej_data["complaint_status"] == "in_progress"
 
     # 5. Cleaner uploads Proof 2 (Resubmission)
-    file2 = {"file": ("proof2.jpg", io.BytesIO(b"clear image"), "image/jpeg")}
+    file2 = {"file": ("proof2.jpg", io.BytesIO(JPEG_HEAD), "image/jpeg")}
     upload2 = client.post(f"/cleaner/tasks/{task_id}/proof", headers=clean_headers, files=file2).json()
     proof2_id = upload2["id"]
     assert upload2["verification_status"] == "pending_verification"

@@ -6,17 +6,18 @@
 # the existing, tested workflow.
 
 import os
-import uuid
 from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import CleanupProof, CleanupTask, User, utcnow
+from models import CleanupProof, CleanupTask, User, WasteAIResult, utcnow
 from routers.complaints import get_current_cleaner_user
 from routers.eventlog import log_event
 from schemas import CleanerTaskResponse, CleanupProofResponse
+import image_utils
+from waste_ai_service import schedule_cleanup_verification
 
 router = APIRouter(prefix="/cleaner", tags=["cleaner"])
 
@@ -189,26 +190,74 @@ def start_cleanup_task(
 )
 async def upload_cleanup_proof(
     task_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_cleaner_user),
 ):
-    """Upload a proof photo file for an assigned cleanup task."""
+    """Upload the AFTER-cleanup proof photo for an assigned cleanup task.
+
+    Step 6 hardening (waste-AI integration; authorization and task-state
+    behavior unchanged):
+      - image validated exactly like citizen images (MIME whitelist + magic
+        bytes + content/MIME consistency + 8 MB cap) — client MIME is never
+        trusted; rejected content returns HTTP 422 with an error code;
+      - stored with a server-generated UUID name (uploads/proof_<uuid>.<ext>);
+      - the complaint's original image is referenced as the BEFORE image
+        (CleanupProof.before_image_url — URL reference, file never copied);
+      - cleanup-AI verification runs as a BACKGROUND task — this request
+        never waits for Gemini, and an AI failure never affects the proof,
+        the task, or this response (fail-open; the admin still reviews).
+    """
     task = _get_task_checked(db, task_id, current_user)
 
-    ext = os.path.splitext(file.filename)[1] if file.filename else ".jpg"
-    filename = f"proof_{uuid.uuid4().hex}{ext}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
+    # A completed (verified) task accepts no further proof submissions;
+    # every active state (assigned / in_progress / proof_submitted / rejected)
+    # may (re)submit evidence — the resubmission-after-rejection workflow.
+    if task.status == "verified":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This task is already verified; no further proof can be submitted.",
+        )
 
-    contents = await file.read()
-    with open(filepath, "wb") as f:
-        f.write(contents)
+    # --- Read with a hard cap: never load arbitrarily large bodies ---
+    cap = image_utils.MAX_IMAGE_BYTES + 1
+    data = await file.read(cap)
+    if len(data) > image_utils.MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=image_utils.ERR_IMAGE_TOO_LARGE,
+        )
 
-    image_url = f"/uploads/{filename}"
+    ok, err_code = image_utils.validate_image_upload(data, file.content_type)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=err_code,
+        )
 
+    sniffed = image_utils.sniff_extension(data[:16])
+    image_url, _mime = image_utils.store_proof_image(data, sniffed)
+
+    # --- BEFORE image: the complaint's original (latest) waste image ---
+    # URL reference only — the physical file is never copied or moved.
+    before_url = None
+    complaint = task.complaint
+    if complaint is not None:
+        latest = (
+            db.query(WasteAIResult)
+            .filter(WasteAIResult.complaint_id == complaint.id)
+            .order_by(WasteAIResult.created_at.desc(), WasteAIResult.id.desc())
+            .first()
+        )
+        if latest is not None:
+            before_url = latest.image_url
+
+    old_status = task.status
     proof = CleanupProof(
         task_id=task.id,
         image_url=image_url,
+        before_image_url=before_url,
         uploaded_by=current_user.id,
         verification_status="pending_verification",
     )
@@ -221,7 +270,7 @@ async def upload_cleanup_proof(
         activity="proof_submitted",
         actor_id=current_user.id,
         actor_role="cleaner",
-        old_value=task.status,
+        old_value=old_status,
         new_value="proof_submitted",
         meta={"proof_id": proof.id, "image_url": image_url},
     )
@@ -232,10 +281,19 @@ async def upload_cleanup_proof(
         db.refresh(task)
     except Exception:
         db.rollback()
+        # Do not leave a stored image with no DB row behind it.
+        try:
+            stored = image_utils.UPLOADS_DIR / image_url.rsplit("/", 1)[1]
+            stored.unlink(missing_ok=True)
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to save cleanup proof.",
         )
+
+    # --- Schedule the background cleanup-AI verification AFTER the commit ---
+    schedule_cleanup_verification(background_tasks, proof.id)
 
     return CleanupProofResponse(
         id=proof.id,

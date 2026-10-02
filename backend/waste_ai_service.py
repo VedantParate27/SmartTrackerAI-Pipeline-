@@ -23,7 +23,7 @@ from pathlib import Path
 import ai_client
 import image_utils
 from database import SessionLocal
-from models import Complaint, WasteAIResult
+from models import CleanupProof, Complaint, WasteAIResult, utcnow
 
 # NOTE: SessionLocal is imported at module level (not deep inside the function)
 # so the test harness can substitute it cleanly; production always uses the
@@ -143,3 +143,143 @@ def _mark_failed(db, result: WasteAIResult, errors: list) -> None:
     result.ai_status = "failed"
     result.errors_json = json.dumps(errors, default=str)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Cleanup-proof AI verification (verify_cleanup contract) — Step 6
+# ---------------------------------------------------------------------------
+# AFTER-proof assistance: runs in a background task after the CleanupProof row
+# is committed, exactly like run_ai_analysis. Fail-open: only the ai_* advisory
+# columns are ever touched — the proof and task survive any failure, the proof
+# is never marked verified by AI, and the complaint is never resolved by AI.
+# The human verification workflow (verification_status / verified_by /
+# verified_at) remains the single source of truth.
+
+def schedule_cleanup_verification(background_tasks, proof_id: int) -> None:
+    """Register the cleanup verification as a background task (never blocks the request)."""
+    background_tasks.add_task(run_cleanup_verification, proof_id)
+
+
+def _safe_proof_path(image_url: str | None) -> Path | None:
+    """Map a stored /uploads/proof_... URL to its file path, safely.
+
+    Rejects anything that is not a bare proof filename (path traversal, other
+    upload namespaces, nested paths).
+    """
+    if not image_url:
+        return None
+    prefix = "/uploads/"
+    if not image_url.startswith(prefix):
+        return None
+    filename = image_url[len(prefix):]
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return None
+    if not filename.startswith("proof_"):
+        return None
+    path = (image_utils.UPLOADS_DIR / filename).resolve()
+    try:
+        path.relative_to(image_utils.UPLOADS_DIR.resolve())
+    except ValueError:
+        return None
+    return path
+
+
+def _mime_for_suffix(path: Path) -> str:
+    """MIME for a stored image from its sniffed extension (safe fallback JPEG)."""
+    return image_utils.EXT_TO_MIME.get(path.suffix.lstrip(".").lower(), "image/jpeg")
+
+
+def run_cleanup_verification(proof_id: int) -> None:
+    """Execute one verify_cleanup() run and persist it. Never raises."""
+    db = SessionLocal()
+    try:
+        proof = db.query(CleanupProof).filter(CleanupProof.id == proof_id).first()
+        if proof is None:
+            return  # nothing to do (row vanished — e.g. test teardown)
+
+        # The human decision outranks the AI: if verification already completed
+        # before this run, keep the advisory columns empty and never resurrect.
+        if proof.verification_status != "pending_verification":
+            return
+
+        after_path = _safe_proof_path(proof.image_url)
+        # The BEFORE image is the complaint's original image, stored under the
+        # complaints namespace — resolve it with the Step-3 complaint-image guard.
+        before_path = _safe_image_path(proof.before_image_url)
+        if after_path is None or not after_path.is_file():
+            proof.ai_errors_json = json.dumps([{
+                "error": "AFTER_IMAGE_UNAVAILABLE",
+                "details": f"stored proof image not found: {proof.image_url}",
+            }], default=str)
+            proof.ai_processed_at = utcnow()
+            db.commit()
+            return
+        if before_path is None or not before_path.is_file():
+            # No BEFORE reference (e.g. complaint had no image): verification
+            # simply cannot run; the proof stays fully human-reviewable.
+            proof.ai_errors_json = json.dumps([{
+                "error": "BEFORE_IMAGE_UNAVAILABLE",
+                "details": f"stored complaint image not found: {proof.before_image_url}",
+            }], default=str)
+            proof.ai_processed_at = utcnow()
+            db.commit()
+            return
+
+        try:
+            before_bytes = before_path.read_bytes()
+            after_bytes = after_path.read_bytes()
+        except OSError as exc:
+            proof.ai_errors_json = json.dumps([{
+                "error": "IMAGE_UNREADABLE",
+                "details": str(exc),
+            }], default=str)
+            proof.ai_processed_at = utcnow()
+            db.commit()
+            return
+
+        outcome = ai_client.verify_cleanup(
+            before_bytes,
+            after_bytes,
+            before_mime=_mime_for_suffix(before_path),
+            after_mime=_mime_for_suffix(after_path),
+        )
+
+        if outcome.get("success"):
+            ai = outcome["result"] or {}
+            proof.ai_after_image_usable = ai.get("after_image_usable")
+            proof.ai_unusable_reason = ai.get("unusable_reason")
+            proof.ai_cleanup_appears_complete = ai.get("cleanup_appears_complete")
+            proof.ai_confidence = ai.get("confidence")
+            proof.ai_reasoning = ai.get("reasoning")
+            # Preserve the AI's documented behavior: confidence < 0.7 (or a
+            # missing confidence) => admin review recommended. The AI's own
+            # flag wins when it supplies one.
+            recommended = ai.get("admin_review_recommended")
+            if recommended is None:
+                confidence = ai.get("confidence")
+                recommended = not (isinstance(confidence, (int, float)) and confidence >= 0.7)
+            proof.ai_admin_review_recommended = bool(recommended)
+            proof.ai_errors_json = None
+        else:
+            proof.ai_errors_json = json.dumps([{
+                "error": outcome.get("error") or "AI_UNKNOWN_ERROR",
+                "details": outcome.get("details"),
+            }], default=str)
+
+        proof.ai_processed_at = utcnow()
+        db.commit()
+    except Exception as exc:  # absolute fail-open: the task must never blow up the app
+        try:
+            db.rollback()
+            proof = db.query(CleanupProof).filter(CleanupProof.id == proof_id).first()
+            if proof is not None:
+                proof.ai_errors_json = json.dumps([{
+                    "error": "AI_RUN_EXCEPTION",
+                    "details": f"{type(exc).__name__}: {exc}",
+                }], default=str)
+                proof.ai_processed_at = utcnow()
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
