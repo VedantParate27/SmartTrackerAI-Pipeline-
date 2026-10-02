@@ -12,6 +12,9 @@
 # Waste-AI integration (contract: branch waste-image-classification):
 #   * WasteAIResult — ONE advisory waste-image AI analysis attempt per row (append-only)
 #   * CleanupProof  — extended with ai_* advisory verification fields (verify_cleanup())
+#   * AdminDecision — ONE authoritative human decision per row (append-only audit):
+#                     "AI recommends, admin decides" — the AI never assigns,
+#                     resolves, closes or escalates anything by itself.
 
 import uuid
 from datetime import datetime, timezone
@@ -153,6 +156,13 @@ class Complaint(Base):
         "AICorrection",
         back_populates="complaint",
         order_by="AICorrection.created_at",
+        cascade="all, delete-orphan",
+    )
+    # Authoritative admin decisions (append-only history; nothing is overwritten)
+    admin_decisions = relationship(
+        "AdminDecision",
+        back_populates="complaint",
+        order_by="AdminDecision.created_at",
         cascade="all, delete-orphan",
     )
 
@@ -359,6 +369,35 @@ class WasteAIResult(Base):
         return (
             f"<WasteAIResult id={self.id} complaint_id={self.complaint_id} "
             f"status={self.ai_status!r} waste_type={self.waste_type!r} severity={self.severity!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# MODEL 6c — AdminDecision  (NEW — authoritative human decision record)
+# ---------------------------------------------------------------------------
+# One row per admin decision (append-only, auditable). The admin decision is
+# the ONLY thing that drives routing: AI output (WasteAIResult) is advisory
+# input and is never modified by, or derived from, a decision.
+#   decision vocabulary (operational choice, NOT AI vocabulary):
+#     assign_cleaner | escalate_authority | request_information | dismiss | resolve
+class AdminDecision(Base):
+    __tablename__ = "admin_decisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    complaint_id = Column(Integer, ForeignKey("complaints.id"), nullable=False, index=True)
+
+    decision = Column(String(30), nullable=False)          # controlled vocabulary above
+    admin_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # decided_by
+    note = Column(Text, nullable=True)                     # optional admin note/reason
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)  # decided_at
+
+    complaint = relationship("Complaint", back_populates="admin_decisions")
+    admin = relationship("User")
+
+    def __repr__(self):
+        return (
+            f"<AdminDecision id={self.id} complaint_id={self.complaint_id} "
+            f"decision={self.decision!r} admin_id={self.admin_id}>"
         )
 
 

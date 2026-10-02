@@ -6,14 +6,26 @@
 #   GET /admin/queue                         — admin complaint queue (frontend-compatible shape)
 #   POST /admin/responses/{id}/approve       — approve response and update status
 
-from typing import List
+import json
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 # Our own modules
 from database import get_db
-from models import Complaint, User, Response as ComplaintResponseModel, CleanupTask, CleanupProof, utcnow, AIOutput, AICorrection
+from models import (
+    AdminDecision,
+    Complaint,
+    User,
+    Response as ComplaintResponseModel,
+    CleanupTask,
+    CleanupProof,
+    WasteAIResult,
+    utcnow,
+    AIOutput,
+    AICorrection,
+)
 from schemas import (
     AdminComplaintUpdateRequest, 
     AdminQueueItem, 
@@ -27,9 +39,15 @@ from schemas import (
     AIDecisionRequest,
     AIDecisionResponse,
     AICorrectionResponse,
+    AdminAIReviewResponse,
+    AdminDecisionRequest,
+    AdminDecisionResult,
+    AdminDecisionSummary,
+    CleanupTaskHandoff,
+    WasteAIResultResponse,
 )
 
-from routers.complaints import get_current_user, get_current_admin_user
+from routers.complaints import get_current_user, get_current_admin_user, _latest_ai_result
 from routers.eventlog import log_event
 from taxonomy import compute_priority
 
@@ -699,5 +717,253 @@ def verify_proof(
         task_status=task.status,
         complaint_status=complaint.status,
         verified_at=now.isoformat(),
+    )
+
+
+# ===========================================================================
+# WASTE-AI: ADMIN AI REVIEW + AUTHORITATIVE DECISION  ("AI recommends,
+# admin decides")
+# ===========================================================================
+# The WasteAIResult row is ADVISORY input and is never modified here. The
+# AdminDecision row appended by PUT .../decision is the authoritative routing
+# record. Escalation to an external authority is never claimed or performed —
+# the decision is only recorded and event-logged.
+
+def _parse_json_list(raw: Optional[str]) -> Optional[list]:
+    """Parse a stored JSON array (review_reasons_json / errors_json) safely.
+
+    Returns None for empty/absent values and a best-effort list otherwise —
+    raw stack traces or internal details are never added here.
+    """
+    if raw is None or raw == "":
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return [str(raw)]
+    if isinstance(parsed, list):
+        return parsed
+    return [parsed]
+
+
+@router.get(
+    "/complaints/{complaint_id}/ai-review",
+    response_model=AdminAIReviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Review the latest waste-AI analysis for a complaint",
+)
+def get_ai_review(
+    complaint_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Admin-only review view of the LATEST WasteAIResult for one complaint.
+
+    - no AI result  -> 404 (nothing is fabricated)
+    - pending       -> analysis.ai_status="pending" with NULL predictions
+    - failed        -> analysis.ai_status="failed" plus the parsed errors list
+    - completed     -> AI vocabulary returned verbatim (no remapping)
+
+    AI flags (escalate_to_authority / needs_human_review) are advisory data
+    for the human reviewer — they never trigger any action by themselves.
+    """
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    if complaint is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found.")
+
+    latest = _latest_ai_result(db, complaint)
+    if latest is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No AI analysis exists for this complaint.",
+        )
+
+    latest_decision = (
+        db.query(AdminDecision)
+        .filter(AdminDecision.complaint_id == complaint.id)
+        .order_by(AdminDecision.created_at.desc(), AdminDecision.id.desc())
+        .first()
+    )
+
+    return {
+        "complaint_id": complaint.id,
+        "tracking_id": complaint.tracking_id,
+        "complaint_status": complaint.status,
+        "complaint_text": complaint.complaint_text,
+        "waste_context": complaint.waste_context,
+        "latitude": complaint.latitude,
+        "longitude": complaint.longitude,
+        "address_text": complaint.address_text,
+        "complaint_created_at": complaint.created_at.isoformat(),
+        "analysis": WasteAIResultResponse.model_validate(latest).model_dump(mode="json"),
+        "review_reasons": _parse_json_list(latest.review_reasons_json),
+        "errors": _parse_json_list(latest.errors_json),
+        "latest_decision": latest_decision,
+    }
+
+
+@router.put(
+    "/complaints/{complaint_id}/decision",
+    response_model=AdminDecisionResult,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Record the authoritative decision for a complaint",
+)
+def record_admin_decision(
+    complaint_id: int,
+    body: AdminDecisionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Record the admin's authoritative operational decision (append-only).
+
+    Semantics per decision:
+      - assign_cleaner:     prepare/reuse the CleanupTask (unassigned handoff —
+                            the existing POST .../assign endpoint picks the
+                            cleaner); complaint -> in_progress (lifecycle-guarded).
+                            NEVER marks the complaint resolved.
+      - escalate_authority: record the escalation decision ONLY. No external
+                            authority is contacted and nothing claims it was.
+      - request_information: complaint stays open; the admin note is preserved.
+      - dismiss:            complaint -> closed (existing lifecycle vocabulary).
+      - resolve:            complaint -> resolved (existing lifecycle vocabulary).
+                            Never fabricates cleanup completion.
+
+    Rules:
+      - works with or without an AI result (manual workflow preserved); the
+        latest analysis status is echoed as context only — a pending/failed
+        result is never treated as a completed AI recommendation.
+      - the WasteAIResult row is never modified.
+      - repeated identical assign_cleaner decisions reuse the existing task
+        (CleanupTask.complaint_id is unique — no duplicate rows).
+      - events use the existing taxonomy vocabulary; ai_prediction_generated
+        is never logged for reviewing or deciding.
+    """
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    if complaint is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found.")
+
+    # Context only: never required, never treated as a completed recommendation.
+    latest_analysis = _latest_ai_result(db, complaint)
+    ai_status = latest_analysis.ai_status if latest_analysis is not None else None
+
+    now = utcnow()
+    decision_row = AdminDecision(
+        complaint_id=complaint.id,
+        decision=body.decision,
+        admin_id=current_user.id,
+        note=body.note,
+        created_at=now,
+    )
+    db.add(decision_row)
+    db.flush()  # assign decision_row.id before commit (consistent with the rest of the router)
+
+    log_event(
+        db,
+        case_id=complaint.tracking_id,
+        activity="admin_decision_made",
+        actor_id=current_user.id,
+        actor_role="admin",
+        new_value=body.decision,
+        meta={"decision_id": decision_row.id, "note": body.note, "ai_status": ai_status},
+    )
+
+    task = db.query(CleanupTask).filter(CleanupTask.complaint_id == complaint.id).first()
+
+    if body.decision == "assign_cleaner":
+        if task is None:
+            # Handoff only: the task is created UNASSIGNED. The existing
+            # POST /admin/complaints/{id}/assign endpoint selects the cleaner
+            # and reuses this same row (no duplicates).
+            task = CleanupTask(
+                complaint_id=complaint.id,
+                assigned_cleaner_id=None,
+                status="assigned",
+                notes=body.note,
+            )
+            db.add(task)
+        # An existing active task is reused untouched (no duplicate, no status
+        # regression); cleaner selection stays with the assignment endpoint.
+        log_event(
+            db,
+            case_id=complaint.tracking_id,
+            activity="dispatch_decided",
+            actor_id=current_user.id,
+            actor_role="admin",
+            new_value="dispatch",
+            meta={"task_id": task.task_id},
+        )
+        if complaint.status != "in_progress":
+            validate_status_transition(complaint.status, "in_progress")
+            complaint.status = "in_progress"
+
+    elif body.decision == "resolve":
+        old_status = complaint.status
+        if complaint.status != "resolved":
+            validate_status_transition(complaint.status, "resolved")
+            complaint.status = "resolved"
+        complaint.resolved_at = complaint.resolved_at or now
+        log_event(
+            db,
+            case_id=complaint.tracking_id,
+            activity="complaint_resolved",
+            actor_id=current_user.id,
+            actor_role="admin",
+            old_value=old_status,
+            new_value="resolved",
+        )
+
+    elif body.decision == "dismiss":
+        if complaint.status != "closed":
+            validate_status_transition(complaint.status, "closed")
+            complaint.status = "closed"
+        complaint.resolved_at = complaint.resolved_at or now
+        log_event(
+            db,
+            case_id=complaint.tracking_id,
+            activity="complaint_closed",
+            actor_id=current_user.id,
+            actor_role="admin",
+            new_value="closed",
+        )
+
+    # escalate_authority / request_information: the decision record + event
+    # above IS the routing mark. No status move, no external authority action,
+    # nothing claimed on the AI's behalf.
+
+    try:
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record decision.",
+        )
+
+    db.refresh(decision_row)
+    db.refresh(complaint)
+    if body.decision == "assign_cleaner":
+        db.refresh(task)
+
+    return AdminDecisionResult(
+        complaint_id=complaint.id,
+        tracking_id=complaint.tracking_id,
+        decision=body.decision,
+        note=decision_row.note,
+        decided_by=current_user.id,
+        decided_by_name=current_user.name,
+        decided_at=decision_row.created_at.isoformat(),
+        complaint_status=complaint.status,
+        cleanup_task=(
+            CleanupTaskHandoff(
+                task_id=task.task_id,
+                status=task.status,
+                assigned_cleaner_id=task.assigned_cleaner_id,
+            )
+            if body.decision == "assign_cleaner" and task is not None
+            else None
+        ),
+        ai_status=ai_status,
     )
 

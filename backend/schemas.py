@@ -16,7 +16,7 @@
 # analysis data. AI vocabulary is exposed verbatim (wet/dry/hazardous/
 # sanitary/e_waste/mixed/none; domestic/moderate/dump_scale/none).
 
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
@@ -685,6 +685,130 @@ class WasteAIResultResponse(BaseModel):
         if hasattr(value, "isoformat"):
             return value.isoformat()
         return str(value)
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 12b — ADMIN AI REVIEW + DECISION  (NEW, waste-AI integration)
+# ---------------------------------------------------------------------------
+# "AI recommends, admin decides": WasteAIResult is advisory input; the admin
+# decision below is the authoritative operational choice. Decision values are
+# a separate controlled vocabulary — AI output values (waste_type="hazardous"
+# etc.) are never decision values.
+AdminDecisionValue = Literal[
+    "assign_cleaner",
+    "escalate_authority",
+    "request_information",
+    "dismiss",
+    "resolve",
+]
+
+
+class AdminDecisionRequest(BaseModel):
+    """One authoritative admin decision for a complaint."""
+
+    decision: AdminDecisionValue = Field(
+        ...,
+        description="Operational decision (independent of any AI recommendation)",
+    )
+    note: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="Optional admin note/reason (e.g. the information requested)",
+    )
+
+    @field_validator("note")
+    @classmethod
+    def note_must_not_be_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped if stripped else None
+
+
+class AdminDecisionSummary(BaseModel):
+    """One persisted admin decision (audit view)."""
+
+    id: int
+    decision: str
+    admin_id: int = Field(..., description="Admin who made the decision (decided_by)")
+    admin_name: Optional[str] = None
+    note: Optional[str] = None
+    created_at: str = Field(..., description="ISO 8601 decided_at timestamp")
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def serialise_decision_created_at(cls, value):
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+class AdminAIReviewResponse(BaseModel):
+    """Everything an admin needs to review the latest waste-AI analysis.
+
+    The nested `analysis` exposes the WasteAIResult fields verbatim
+    (pending → predictions NULL; failed → errors; completed → AI vocabulary
+    untouched). review_reasons / errors are parsed JSON lists.
+    """
+
+    complaint_id: int
+    tracking_id: str
+    complaint_status: str
+    complaint_text: str
+    waste_context: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address_text: Optional[str] = None
+    complaint_created_at: str
+
+    analysis: WasteAIResultResponse
+    review_reasons: Optional[List[Any]] = Field(
+        default=None,
+        description="Human-review reasons from the AI (parsed from review_reasons_json)",
+    )
+    errors: Optional[List[Any]] = Field(
+        default=None,
+        description="AI-run errors (parsed from errors_json); never a stack trace",
+    )
+
+    latest_decision: Optional[AdminDecisionSummary] = Field(
+        default=None,
+        description="Most recent admin decision on this complaint, if any",
+    )
+
+
+class CleanupTaskHandoff(BaseModel):
+    """CleanupTask state after an assign_cleaner decision (handoff only)."""
+
+    task_id: str
+    status: str
+    assigned_cleaner_id: Optional[int] = None
+
+
+class AdminDecisionResult(BaseModel):
+    """Result of PUT /admin/complaints/{id}/decision."""
+
+    complaint_id: int
+    tracking_id: str
+    decision: str
+    note: Optional[str] = None
+    decided_by: int = Field(..., description="Admin user ID who made the decision")
+    decided_by_name: str
+    decided_at: str = Field(..., description="ISO 8601 decision timestamp")
+    complaint_status: str
+    cleanup_task: Optional[CleanupTaskHandoff] = Field(
+        default=None,
+        description="Cleanup task created/reused by an assign_cleaner decision",
+    )
+    ai_status: Optional[str] = Field(
+        default=None,
+        description=(
+            "Status of the latest waste-AI analysis at decision time "
+            "(context only — never treated as a completed recommendation when pending/failed)"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
