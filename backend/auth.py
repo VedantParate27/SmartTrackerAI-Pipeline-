@@ -113,6 +113,15 @@ def get_current_user(
     return user
 
 
+def require_role(current_user: sqlite3.Row, role: str) -> sqlite3.Row:
+    if current_user["role"] != role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+    return current_user
+
+
 # ---------------------------------------------------------------------------
 # Core operations, called from the endpoints in main.py
 # ---------------------------------------------------------------------------

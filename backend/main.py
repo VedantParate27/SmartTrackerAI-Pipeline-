@@ -19,6 +19,7 @@ from auth import (
     register_user,
     login_user,
     get_current_user,
+    require_role,
 )
 
 app = FastAPI(title="SmartTracker AI")
@@ -78,7 +79,6 @@ class ComplaintOut(BaseModel):
 
 
 class ApprovalIn(BaseModel):
-    admin_id: int
     final_response: str
 
 
@@ -147,12 +147,19 @@ def submit_complaint(
 # Split it later only if you need to show progress between steps in the UI.
 
 @app.post("/complaints/{complaint_id}/process", response_model=ComplaintOut)
-def process_complaint(complaint_id: int, conn=Depends(get_conn)):
+def process_complaint(
+    complaint_id: int,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
     row = conn.execute(
         "SELECT * FROM complaints WHERE id = ?", (complaint_id,)
     ).fetchone()
     if not row:
         raise HTTPException(404, "complaint not found")
+
+    if current_user["role"] != "admin" and row["user_id"] != current_user["id"]:
+        raise HTTPException(403, "not authorized to process this complaint")
 
     conn.execute(
         "UPDATE complaints SET status = 'processing' WHERE id = ?", (complaint_id,)
@@ -188,7 +195,21 @@ def process_complaint(complaint_id: int, conn=Depends(get_conn)):
 # ---------- customer: view status ----------
 
 @app.get("/complaints/{complaint_id}", response_model=ComplaintOut)
-def get_complaint(complaint_id: int, conn=Depends(get_conn)):
+def get_complaint(
+    complaint_id: int,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    row = conn.execute(
+        "SELECT user_id FROM complaints WHERE id = ?", (complaint_id,)
+    ).fetchone()
+
+    if not row:
+        raise HTTPException(404, "complaint not found")
+
+    if current_user["role"] != "admin" and row["user_id"] != current_user["id"]:
+        raise HTTPException(403, "not authorized to view this complaint")
+
     return _get_complaint_row(conn, complaint_id)
 
 
@@ -210,7 +231,12 @@ def _get_complaint_row(conn, complaint_id: int) -> dict:
 # ---------- admin: review queue ----------
 
 @app.get("/admin/queue")
-def admin_queue(conn=Depends(get_conn)):
+def admin_queue(
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "admin")
+
     rows = conn.execute(
     """SELECT c.id, c.user_id, c.complaint_text, c.category, c.department,
               c.confidence_score, c.extracted_entities,
@@ -227,12 +253,13 @@ def admin_queue(conn=Depends(get_conn)):
 # ---------- admin: approve / edit response ----------
 
 @app.post("/admin/responses/{complaint_id}/approve")
-def approve_response(complaint_id: int, payload: ApprovalIn, conn=Depends(get_conn)):
-    admin = conn.execute(
-        "SELECT id FROM users WHERE id = ? AND role = 'admin'", (payload.admin_id,)
-    ).fetchone()
-    if not admin:
-        raise HTTPException(403, "not an admin")
+def approve_response(
+    complaint_id: int,
+    payload: ApprovalIn,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "admin")
 
     response = conn.execute(
         "SELECT id FROM responses WHERE complaint_id = ?", (complaint_id,)
@@ -244,7 +271,12 @@ def approve_response(complaint_id: int, payload: ApprovalIn, conn=Depends(get_co
         """UPDATE responses
            SET final_response = ?, approved_by = ?, approved_at = ?
            WHERE complaint_id = ?""",
-        (payload.final_response, payload.admin_id, datetime.utcnow().isoformat(), complaint_id),
+        (
+            payload.final_response,
+            current_user["id"],
+            datetime.utcnow().isoformat(),
+            complaint_id,
+        ),
     )
     conn.execute(
         "UPDATE complaints SET status = 'resolved' WHERE id = ?", (complaint_id,)
