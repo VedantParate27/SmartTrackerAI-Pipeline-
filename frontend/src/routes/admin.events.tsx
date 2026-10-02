@@ -210,7 +210,7 @@ function EventsPage() {
                     <td className="whitespace-nowrap">
                       {formatDateTime(event.timestamp)}
                     </td>
-                    <td>
+                    <td className="whitespace-nowrap">
                       <Link
                         to="/admin/cases/$caseId"
                         params={{ caseId: event.case_id }}

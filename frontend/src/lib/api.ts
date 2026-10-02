@@ -1,3 +1,5 @@
+import { secondsSince } from './format'
+
 export const API_BASE_URL = (
   import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 ).replace(/\/$/, '')
@@ -22,6 +24,17 @@ export const SEVERITIES = ['small', 'medium', 'large'] as const
 export type Severity = (typeof SEVERITIES)[number]
 
 export type TriageMode = 'manual' | 'ai_assisted'
+
+export const COMPLAINT_STATUSES = [
+  'pending',
+  'in_progress',
+  'resolved',
+  'closed',
+] as const
+export type ComplaintStatus = (typeof COMPLAINT_STATUSES)[number]
+
+export const PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const
+export type Priority = (typeof PRIORITIES)[number]
 
 export const EVENT_ACTIVITIES = [
   'complaint_created',
@@ -97,7 +110,19 @@ export interface CreateComplaintRequest {
   address_text?: string | null
 }
 
-/** Exact ComplaintResponse returned by POST /complaints/, /complaints/my and /complaints/{id}. */
+/** State of the latest waste-photo analysis; null when no photo was ever analysed. */
+export type AIStatus = 'pending' | 'completed' | 'failed'
+
+/**
+ * Exact ComplaintResponse returned by POST /complaints/, /complaints/my,
+ * /complaints/{id} and POST /complaints/{id}/image.
+ *
+ * Once a photo has been analysed (`ai_status` not null), the backend merges
+ * the AI summary into this body, and its `waste_type` overwrites the
+ * complaint's own: the AI's verbatim value ("sanitary", "mixed"…) when
+ * completed, null while pending or failed. Only trust `waste_type` here as
+ * the complaint's type when `ai_status` is null — see citizenWasteType().
+ */
 export interface ComplaintResponse {
   tracking_id: string
   complaint_text: string
@@ -117,7 +142,40 @@ export interface ComplaintResponse {
   review_reason: string | null
   resolved_at: string | null
   source: string
+  ai_status: AIStatus | null
   created_at: string
+}
+
+/** The complaint's own waste type, or null when the response's value is the AI's. */
+export function citizenWasteType(item: ComplaintResponse) {
+  return item.ai_status === null ? item.waste_type : null
+}
+
+/**
+ * review_required is set by the text-AI triage and cleared only by the legacy
+ * ai-decision route, which the UI no longer calls, so on a resolved or closed
+ * case it is stale. Only open cases count as waiting for review.
+ */
+export function needsReview(item: {
+  review_required: boolean | null
+  status: string
+}) {
+  const status = item.status.toLowerCase()
+  return (
+    Boolean(item.review_required) &&
+    (status === 'pending' || status === 'in_progress')
+  )
+}
+
+/**
+ * Exact request body accepted by PUT /admin/complaints/{id}. Send only what
+ * changes; at least one field is required. A blank department is read as "no
+ * change", so a department can be replaced but never cleared.
+ */
+export interface AdminComplaintUpdateRequest {
+  status?: ComplaintStatus
+  priority?: Priority
+  department?: string
 }
 
 /**
@@ -170,7 +228,128 @@ export interface AdminQueueItem {
 }
 
 /* ------------------------------------------------------------------ *
- * AI triage + human-in-the-loop decision
+ * Waste-photo AI — advisory analysis of the citizen's photo
+ * ------------------------------------------------------------------ */
+
+/**
+ * Background AI runs live inside the API process (FastAPI BackgroundTasks):
+ * a server restart drops them, and seeded proofs never get one, so their rows
+ * stay unfinished for good. The backend gives up after WASTE_AI_TIMEOUT_S
+ * (120 s); a run still open ten minutes after it started is treated as lost —
+ * no spinner, no polling.
+ */
+export function aiRunLost(startedAt: string) {
+  return secondsSince(startedAt) > 600
+}
+
+/** Mirrors backend/image_utils.py: content-sniffed JPEG/PNG/WebP, 8 MB cap. */
+export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
+export const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+/**
+ * Exact WasteAIResultResponse from GET /complaints/{id}/ai-analysis. One row
+ * per photo upload. The AI's vocabulary is returned verbatim and differs from
+ * the complaint taxonomy: waste_type wet|dry|hazardous|sanitary|e_waste|mixed|
+ * none, severity domestic|moderate|dump_scale|none. Predictions are null while
+ * pending and on failure; errors_json then explains why.
+ */
+export interface WasteAIAnalysis {
+  id: number
+  complaint_id: number
+  created_at: string
+  ai_status: AIStatus
+  image_url: string | null
+  image_mime_type: string | null
+  image_usable: boolean | null
+  unusable_reason: string | null
+  waste_type: string | null
+  waste_type_confidence: number | null
+  severity: string | null
+  severity_confidence: number | null
+  reasoning: string | null
+  follow_up_question: string | null
+  recurring_flag: boolean | null
+  prior_reports_count: number | null
+  radius_m: number | null
+  escalate_to_authority: boolean | null
+  needs_human_review: boolean | null
+  review_reasons_json: string | null
+  disposal_guidance: string | null
+  errors_json: string | null
+  model_name: string | null
+  model_version: string | null
+  latency_ms: number | null
+}
+
+/* ------------------------------------------------------------------ *
+ * Admin decision — "AI recommends, admin decides"
+ * ------------------------------------------------------------------ */
+
+export const ADMIN_DECISIONS = [
+  'assign_cleaner',
+  'resolve',
+  'escalate_authority',
+  'request_information',
+  'dismiss',
+] as const
+export type AdminDecisionValue = (typeof ADMIN_DECISIONS)[number]
+
+/** Exact request body accepted by PUT /admin/complaints/{id}/decision. */
+export interface AdminDecisionRequest {
+  decision: AdminDecisionValue
+  note?: string | null
+}
+
+export interface AdminDecisionSummary {
+  id: number
+  decision: string
+  admin_id: number
+  /** Declared by the schema but never populated by the backend — always null. */
+  admin_name: string | null
+  note: string | null
+  created_at: string
+}
+
+/** Exact AdminAIReviewResponse from GET /admin/complaints/{id}/ai-review. */
+export interface AdminAIReview {
+  complaint_id: number
+  tracking_id: string
+  complaint_status: string
+  complaint_text: string
+  waste_context: string | null
+  latitude: number | null
+  longitude: number | null
+  address_text: string | null
+  complaint_created_at: string
+  analysis: WasteAIAnalysis
+  review_reasons: unknown[] | null
+  errors: unknown[] | null
+  latest_decision: AdminDecisionSummary | null
+}
+
+export interface CleanupTaskHandoff {
+  task_id: string
+  status: string
+  assigned_cleaner_id: number | null
+}
+
+/** Exact AdminDecisionResult from PUT /admin/complaints/{id}/decision. */
+export interface AdminDecisionResult {
+  complaint_id: number
+  tracking_id: string
+  decision: string
+  note: string | null
+  decided_by: number
+  decided_by_name: string
+  decided_at: string
+  complaint_status: string
+  /** Set by assign_cleaner: the task is created with no cleaner yet. */
+  cleanup_task: CleanupTaskHandoff | null
+  ai_status: AIStatus | null
+}
+
+/* ------------------------------------------------------------------ *
+ * Text-AI triage (research model) — read-only in the UI
  * ------------------------------------------------------------------ */
 
 /** Exact AIOutputResponse from GET /admin/complaints/{id}/ai-output. */
@@ -188,41 +367,6 @@ export interface AIOutput {
   escalation_reason: string | null
   latency_ms: number | null
   predicted_at: string
-}
-
-export type Decision = 'dispatch' | 'guidance'
-
-export interface AICorrectionItem {
-  field_name: 'waste_type' | 'quantity_severity' | 'intervention_required'
-  ai_value?: string | null
-  admin_value?: string | null
-}
-
-/** Exact request body accepted by POST /admin/complaints/{id}/ai-decision. */
-export interface AIDecisionRequest {
-  waste_type: WasteType
-  quantity_severity: Severity
-  intervention_required: boolean
-  decision: Decision
-  guidance_text?: string | null
-  notes?: string | null
-  corrections?: AICorrectionItem[]
-}
-
-export interface AIDecisionResponse {
-  tracking_id: string
-  triage_mode: TriageMode
-  review_completed: boolean
-  decision: string
-  waste_type: string | null
-  quantity_severity: string | null
-  intervention_required: boolean
-  priority: string
-  status: string
-  task_id: string | null
-  corrections_recorded: number
-  acceptance_rate_fields: number
-  resolved_at: string | null
 }
 
 /** Exact AICorrectionResponse from GET /admin/complaints/{id}/corrections. */
@@ -300,6 +444,50 @@ export interface VerifyProofResult {
   verified_at: string
 }
 
+/**
+ * One proof as the admin review sees it. The ai_* fields are the background
+ * before/after comparison — advisory only; verify/reject stays human. All are
+ * null until the comparison has run (ai_processed_at set), and on failure
+ * ai_errors explains why.
+ */
+export interface ProofReviewItem {
+  id: number
+  image_url: string
+  before_image_url: string | null
+  uploaded_by: number
+  uploaded_at: string
+  verification_status: string
+  verified_by: number | null
+  verified_at: string | null
+  rejection_reason: string | null
+  ai_after_image_usable: boolean | null
+  ai_unusable_reason: string | null
+  ai_cleanup_appears_complete: boolean | null
+  ai_confidence: number | null
+  ai_reasoning: string | null
+  ai_admin_review_recommended: boolean | null
+  ai_processed_at: string | null
+  ai_errors: unknown[] | null
+}
+
+/** Exact AdminProofReviewResponse from GET /admin/tasks/{task_id}/proof. */
+export interface AdminProofReview {
+  task_id: string
+  task_status: string
+  /** Null after an assign_cleaner decision until a cleaner is picked. */
+  task_assigned_cleaner_id: number | null
+  assigned_at: string
+  completed_at: string | null
+  complaint_id: number
+  tracking_id: string
+  complaint_text: string
+  complaint_status: string
+  latitude: number | null
+  longitude: number | null
+  address_text: string | null
+  proofs: ProofReviewItem[]
+}
+
 /* ------------------------------------------------------------------ *
  * Event log + mining dataset
  * ------------------------------------------------------------------ */
@@ -341,16 +529,34 @@ export interface MiningDataset {
  * ------------------------------------------------------------------ */
 
 /**
- * Decisions the panel offers for a complaint status. The backend moves
- * dispatch -> in_progress and guidance -> resolved through VALID_TRANSITIONS
- * in backend/routers/admin.py; a resolved or closed case is treated as
- * decided. The backend stays the authority and its 400 is shown verbatim.
+ * Decisions the panel offers. Mirrors record_admin_decision + VALID_TRANSITIONS
+ * in backend/routers/admin.py: assign_cleaner moves to in_progress, resolve to
+ * resolved, dismiss to closed; escalate/request-information record only. Only
+ * open cases are offered decisions, and assign_cleaner is hidden unless no
+ * task is known to exist (`null` = still checking): on a live task the follow-
+ * up /assign would reset it to "assigned". The backend stays the authority and
+ * its 400 is shown verbatim.
  */
-export function allowedDecisions(status: string): Decision[] {
+export function allowedDecisions(
+  status: string,
+  hasTask: boolean | null,
+): AdminDecisionValue[] {
   const value = status.toLowerCase()
-  return value === 'pending' || value === 'in_progress'
-    ? ['dispatch', 'guidance']
-    : []
+  if (value !== 'pending' && value !== 'in_progress') return []
+  return ADMIN_DECISIONS.filter(
+    (decision) => !(decision === 'assign_cleaner' && hasTask !== false),
+  )
+}
+
+/**
+ * Statuses PUT /admin/complaints/{id} can move a complaint to — VALID_TRANSITIONS
+ * in backend/routers/admin.py: forward only, and closed is final.
+ */
+export function statusMoves(status: string): ComplaintStatus[] {
+  const index = COMPLAINT_STATUSES.indexOf(
+    status.toLowerCase() as ComplaintStatus,
+  )
+  return index === -1 ? [] : COMPLAINT_STATUSES.slice(index + 1)
 }
 
 /* ------------------------------------------------------------------ *
@@ -390,10 +596,22 @@ export function fieldErrors(error: unknown): Record<string, string> {
   return mapped
 }
 
+/** Photo uploads answer 422 with a bare code (backend/image_utils.py). */
+const DETAIL_CODES: Record<string, string> = {
+  IMAGE_REQUIRED: 'Choose a photo to upload.',
+  IMAGE_EMPTY: 'That file is empty. Choose another photo.',
+  IMAGE_TOO_LARGE: 'That photo is over 8 MB. Choose a smaller one.',
+  IMAGE_UNSUPPORTED_TYPE: 'Only JPEG, PNG or WebP photos are accepted.',
+  IMAGE_MIME_MISMATCH:
+    "The file's contents don't match its type. Save it again as JPEG or PNG.",
+}
+
 function errorMessage(status: number, body: unknown) {
   if (typeof body === 'object' && body !== null && 'detail' in body) {
     const detail = body.detail
-    if (typeof detail === 'string') return { message: detail, issues: [] }
+    if (typeof detail === 'string') {
+      return { message: DETAIL_CODES[detail] ?? detail, issues: [] }
+    }
     if (Array.isArray(detail)) {
       const issues = detail.filter(
         (issue): issue is ValidationIssue =>
@@ -453,10 +671,27 @@ async function send(
     const timedOut =
       error instanceof DOMException &&
       (error.name === 'AbortError' || error.name === 'TimeoutError')
+    if (timedOut) {
+      throw new ApiError(
+        0,
+        'The backend request timed out. Check the connection and try again.',
+      )
+    }
+    // An unhandled exception in FastAPI answers without CORS headers, which
+    // the browser reports exactly like an unreachable server; /health tells
+    // the two apart.
+    const alive =
+      path !== '/health' &&
+      (await fetch(`${API_BASE_URL}/health`, {
+        signal: AbortSignal.timeout(3_000),
+      }).then(
+        (reply) => reply.ok,
+        () => false,
+      ))
     throw new ApiError(
-      0,
-      timedOut
-        ? 'The backend request timed out. Check the connection and try again.'
+      alive ? 500 : 0,
+      alive
+        ? 'The backend hit an internal error on this request. Try again, and report it to the backend team if it keeps failing.'
         : 'Could not reach the FastAPI backend.',
     )
   }
@@ -476,6 +711,16 @@ async function request<T>(
 ): Promise<T> {
   const response = await send(path, init, timeoutMs)
   return (await response.json().catch(() => null)) as T
+}
+
+/** For endpoints whose 404 means "nothing yet" rather than a failure. */
+async function nullOn404<T>(pending: Promise<T>): Promise<T | null> {
+  try {
+    return await pending
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null
+    throw error
+  }
 }
 
 function bearer(token: string) {
@@ -547,6 +792,43 @@ export function getMyComplaints(accessToken: string, signal?: AbortSignal) {
   })
 }
 
+/**
+ * Attach or replace the complaint photo (owner or admin). The response comes
+ * back immediately with ai_status "pending"; the AI runs in the background.
+ */
+export function uploadComplaintImage(
+  trackingId: string,
+  file: File,
+  accessToken: string,
+) {
+  const form = new FormData()
+  form.append('file', file)
+  return request<ComplaintResponse>(
+    `/complaints/${encodeURIComponent(trackingId)}/image`,
+    { method: 'POST', headers: bearer(accessToken), body: form },
+    30_000,
+  )
+}
+
+/**
+ * Latest photo analysis, or null when no photo was ever analysed. Readable by
+ * the owner, the assigned cleaner and admins.
+ */
+export async function getAIAnalysis(
+  trackingId: string,
+  accessToken: string,
+  signal?: AbortSignal,
+) {
+  const analysis = await nullOn404(
+    request<WasteAIAnalysis>(
+      `/complaints/${encodeURIComponent(trackingId)}/ai-analysis`,
+      { headers: bearer(accessToken), signal },
+    ),
+  )
+  if (analysis) complaintIds.set(trackingId, analysis.complaint_id)
+  return analysis
+}
+
 export function getAdminQueue(accessToken: string, signal?: AbortSignal) {
   return request<AdminQueueItem[]>('/admin/queue', {
     headers: bearer(accessToken),
@@ -565,6 +847,23 @@ export function getAdminQueueItem(
   )
 }
 
+/**
+ * Correct priority or department, or move the status forward. The reply is
+ * the bare complaint row — no photo-AI summary is merged in, so its
+ * ai_status is always null.
+ */
+export function updateAdminComplaint(
+  complaintId: number,
+  body: AdminComplaintUpdateRequest,
+  accessToken: string,
+) {
+  return request<ComplaintResponse>(`/admin/complaints/${complaintId}`, {
+    method: 'PUT',
+    headers: bearer(accessToken),
+    body: JSON.stringify(body),
+  })
+}
+
 export function getMiningDataset(accessToken: string, signal?: AbortSignal) {
   return request<MiningDataset>(
     '/admin/mining/dataset',
@@ -576,12 +875,13 @@ export function getMiningDataset(accessToken: string, signal?: AbortSignal) {
 const complaintIds = new Map<string, number>()
 
 /**
- * WORKAROUND — every triage/dispatch endpoint takes the numeric database
- * `complaint_id`, but no complaint or queue response exposes it; the backend's
- * own tests read it straight from the database. The mining dataset is the only
- * HTTP route that returns it next to `tracking_id`, so it is resolved from
- * there and cached (the mapping never changes). Delete this once
- * AdminQueueItem carries the id.
+ * WORKAROUND — ai-review, decision, assign and the other admin actions take
+ * the numeric database `complaint_id`, but no complaint or queue response
+ * exposes it; the backend's own tests still read it straight from the
+ * database. Responses that do carry it (ai-analysis, task proof review) fill
+ * this cache; otherwise the mining dataset — the only route listing it next
+ * to `tracking_id` — is fetched once. Delete this once AdminQueueItem carries
+ * the id.
  */
 export async function resolveComplaintId(
   trackingId: string,
@@ -611,15 +911,29 @@ export function getAIOutputs(
   })
 }
 
-export function recordAIDecision(
+/** The admin view of the latest photo analysis, or null when there is none. */
+export function getAIReview(
   complaintId: number,
-  body: AIDecisionRequest,
+  accessToken: string,
+  signal?: AbortSignal,
+) {
+  return nullOn404(
+    request<AdminAIReview>(`/admin/complaints/${complaintId}/ai-review`, {
+      headers: bearer(accessToken),
+      signal,
+    }),
+  )
+}
+
+export function recordAdminDecision(
+  complaintId: number,
+  body: AdminDecisionRequest,
   accessToken: string,
 ) {
-  return request<AIDecisionResponse>(
-    `/admin/complaints/${complaintId}/ai-decision`,
+  return request<AdminDecisionResult>(
+    `/admin/complaints/${complaintId}/decision`,
     {
-      method: 'POST',
+      method: 'PUT',
       headers: bearer(accessToken),
       body: JSON.stringify(body),
     },
@@ -694,6 +1008,23 @@ export async function findTaskForComplaint(
 ) {
   const tasks = await getCleanerTasks(accessToken, signal)
   return tasks.find((task) => task.tracking_id === trackingId) ?? null
+}
+
+/**
+ * The admin task view: who holds it (null until a cleaner is picked) and every
+ * proof with its before photo and advisory AI comparison, oldest first.
+ */
+export async function getTaskProofReview(
+  taskId: string,
+  accessToken: string,
+  signal?: AbortSignal,
+) {
+  const review = await request<AdminProofReview>(
+    `/admin/tasks/${encodeURIComponent(taskId)}/proof`,
+    { headers: bearer(accessToken), signal },
+  )
+  complaintIds.set(review.tracking_id, review.complaint_id)
+  return review
 }
 
 export function startCleanerTask(taskId: string, accessToken: string) {

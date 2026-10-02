@@ -67,6 +67,84 @@ export function triageModeLabel(value: string | null | undefined) {
   return 'Not triaged'
 }
 
+/* The photo AI has its own vocabulary, returned verbatim by the backend. */
+const AI_WASTE_LABELS: Record<string, string> = {
+  wet: 'Wet waste',
+  dry: 'Dry waste',
+  hazardous: 'Hazardous waste',
+  sanitary: 'Sanitary waste',
+  e_waste: 'E-waste',
+  mixed: 'Mixed waste',
+  none: 'No waste visible',
+}
+
+const AI_SEVERITY_LABELS: Record<string, string> = {
+  domestic: 'Household amount',
+  moderate: 'Moderate pile',
+  dump_scale: 'Dump-scale',
+  none: 'Nothing to clear',
+}
+
+const DECISION_LABELS: Record<string, string> = {
+  assign_cleaner: 'Assign a cleaner',
+  resolve: 'Resolve',
+  escalate_authority: 'Escalate to authority',
+  request_information: 'Request information',
+  dismiss: 'Dismiss',
+  // Recorded by the earlier ai-decision endpoint.
+  dispatch: 'Dispatch',
+  guidance: 'Send guidance',
+}
+
+export const aiWasteLabel = (value: string | null | undefined) =>
+  label(AI_WASTE_LABELS, value)
+export const aiSeverityLabel = (value: string | null | undefined) =>
+  label(AI_SEVERITY_LABELS, value)
+export const decisionLabel = (value: string) =>
+  label(DECISION_LABELS, value) ?? value
+
+/** "low_waste_type_confidence: 0.42" -> "Low waste type confidence · 42%". */
+export function reviewReasonText(reason: unknown) {
+  const text = typeof reason === 'string' ? reason : JSON.stringify(reason)
+  const match = /^([a-z_]+):\s*(.+)$/i.exec(text)
+  if (!match) return humanize(text)
+  const value = backendConfidence(match[2]) ?? match[2]
+  return `${humanize(match[1])} · ${value}`
+}
+
+const AI_ERROR_MESSAGES: Record<string, string> = {
+  AI_SOURCE_NOT_CONFIGURED: 'The AI service is not set up on this server.',
+  AI_SOURCE_NOT_FOUND: 'The AI service is not set up on this server.',
+  AI_SETUP_FAILED: 'The AI service could not start.',
+  AI_DISABLED: 'AI checks are switched off on this server.',
+  AI_TIMEOUT: 'The AI took too long to answer.',
+  AI_INVALID_RESPONSE: 'The AI returned an answer that could not be read.',
+  IMAGE_UNAVAILABLE: 'The stored photo could not be found.',
+  IMAGE_UNREADABLE: 'The stored photo could not be read.',
+  BEFORE_IMAGE_UNAVAILABLE: 'There is no complaint photo to compare against.',
+  AFTER_IMAGE_UNAVAILABLE: 'The proof photo could not be found.',
+  AI_RUN_EXCEPTION: 'The AI run failed unexpectedly.',
+  AI_UNKNOWN_ERROR: 'The AI run failed for an unknown reason.',
+}
+
+/** One errors_json entry ({ error, details }) as a code and a plain message. */
+export function aiErrorInfo(entry: unknown) {
+  const body = record(entry)
+  const code =
+    typeof body?.error === 'string'
+      ? body.error
+      : typeof entry === 'string'
+        ? entry
+        : 'AI_UNKNOWN_ERROR'
+  const details =
+    typeof body?.details === 'string' && body.details ? body.details : null
+  return {
+    code,
+    message: AI_ERROR_MESSAGES[code] ?? humanize(code.toLowerCase()),
+    details,
+  }
+}
+
 /** Display either a 0–1 score or an already-percent value without guessing. */
 export function backendConfidence(value: unknown) {
   const numeric =

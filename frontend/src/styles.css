@@ -245,12 +245,19 @@
    * ---------------------------------------------------------------- */
 
   .card {
+    /* A card in a grid must not grow to fit nowrap text (it overflowed at 360px). */
+    min-width: 0;
     border: 1px solid var(--glass-line);
     border-radius: var(--radius-lg);
     background: var(--glass);
     backdrop-filter: var(--glass-blur);
     -webkit-backdrop-filter: var(--glass-blur);
     box-shadow: var(--shadow-md);
+  }
+
+  /* Disclosure toggles are tap targets too (WCAG 2.2: at least 24px tall). */
+  summary {
+    padding-block: 0.25rem;
   }
 
   .card-pad {
@@ -1074,6 +1081,12 @@
     color: var(--warn);
   }
 
+  /* The same tag in accent: an AI hint on an option, never a selection. */
+  .changed-tag.ai-tag {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
   .ai-grid {
     display: grid;
     gap: 0.6rem;
@@ -1269,5 +1282,156 @@
     overflow-x: auto;
     border-bottom: 1px solid var(--glass-line);
     padding-bottom: 0.25rem;
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Photo AI — status, confidence, photos, before/after
+   * ---------------------------------------------------------------- */
+
+  /* A background AI run in flight: the pill's dot breathes. */
+  .pill[data-pulse]::before {
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    50% {
+      opacity: 0.25;
+      transform: scale(0.7);
+    }
+  }
+
+  .meter-row {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, auto) minmax(0, 1fr) 2.75rem;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.75rem;
+  }
+
+  .meter-label {
+    color: var(--fg-muted);
+    font-weight: 600;
+  }
+
+  .meter {
+    position: relative;
+    display: block;
+    height: 0.45rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--surface-3);
+  }
+
+  .meter-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--ok);
+    transition: width 300ms ease;
+  }
+
+  .meter-fill[data-tone='warn'] {
+    background: var(--warn);
+  }
+
+  .meter-fill[data-tone='danger'] {
+    background: var(--danger);
+  }
+
+  .meter-value {
+    text-align: right;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .photo-link {
+    display: block;
+    border-radius: inherit;
+  }
+
+  .photo-frame {
+    display: block;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    border: 1px solid var(--glass-line);
+    border-radius: var(--radius-md);
+    object-fit: cover;
+    background: var(--surface-3);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .file-drop-icon {
+    display: grid;
+    place-items: center;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .compare-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .compare-cell {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+  }
+
+  .compare-tag {
+    position: absolute;
+    top: 0.4rem;
+    left: 0.4rem;
+    z-index: 1;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--surface) 82%, transparent);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    padding: 0.1rem 0.5rem;
+    font-size: 0.625rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg);
+    pointer-events: none;
+  }
+
+  .compare-cell .proof-image,
+  .compare-cell .proof-missing {
+    aspect-ratio: 1 / 1;
+  }
+
+  /* Advisory AI output sits on a tinted, dashed surface so it never reads as
+     the human decision. */
+  .ai-note {
+    border: 1px dashed color-mix(in oklab, var(--accent) 40%, var(--line));
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklab, var(--accent-soft) 55%, transparent);
+    padding: 0.7rem 0.8rem;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+  }
+
+  .flag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pill[data-pulse]::before {
+      animation: none;
+    }
+
+    .meter-fill {
+      transition: none;
+    }
   }
 }

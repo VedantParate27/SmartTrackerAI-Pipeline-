@@ -11,7 +11,7 @@ import {
   Spinner,
   WastePill,
 } from '#/components/ui'
-import { WASTE_TYPES, getAdminQueue } from '#/lib/api'
+import { WASTE_TYPES, getAdminQueue, needsReview } from '#/lib/api'
 import type { AdminQueueItem } from '#/lib/api'
 import { signOut, useAuth } from '#/lib/auth'
 import {
@@ -69,6 +69,7 @@ function QueuePage() {
         item.name,
         item.email,
         item.address_text,
+        item.department,
         wasteLabel(item.waste_type),
       ]
         .filter(Boolean)
@@ -80,8 +81,8 @@ function QueuePage() {
       if (waste !== 'any' && waste !== 'none' && item.waste_type !== waste) {
         return false
       }
-      if (review === 'yes' && !item.review_required) return false
-      if (review === 'no' && item.review_required) return false
+      if (review === 'yes' && !needsReview(item)) return false
+      if (review === 'no' && needsReview(item)) return false
       if (priority !== 'any' && item.priority !== priority) return false
       return true
     })
@@ -94,7 +95,7 @@ function QueuePage() {
       { label: 'Total', value: cases.length },
       {
         label: 'Needs review',
-        value: cases.filter((item) => item.review_required).length,
+        value: cases.filter(needsReview).length,
       },
       { label: 'Pending', value: count('pending') },
       { label: 'In progress', value: count('in_progress') },
@@ -271,7 +272,7 @@ function QueuePage() {
                     <p className="m-0 text-sm">{summary(item)}</p>
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       <ReviewPill
-                        required={item.review_required}
+                        required={needsReview(item)}
                         reason={item.review_reason}
                       />
                       <WastePill wasteType={item.waste_type} />
@@ -281,6 +282,11 @@ function QueuePage() {
                         </span>
                       ) : null}
                       <BackendPriorityPill priority={item.priority} />
+                      {item.department ? (
+                        <span className="pill normal-case whitespace-normal [overflow-wrap:anywhere]">
+                          {item.department}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                   <div className="truncate text-xs muted" data-label="Location">

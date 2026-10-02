@@ -7,27 +7,27 @@ const PIPELINE = [
   {
     step: '01',
     title: 'Report',
-    body: 'A citizen describes the waste and, optionally, where it is. The backend returns a tracking reference.',
+    body: 'A citizen describes the waste, adds a photo and, optionally, where it is. The backend returns a tracking reference.',
   },
   {
     step: '02',
-    title: 'AI triage',
-    body: 'An AI model suggests waste type, amount and whether a cleaner is needed — with a confidence score.',
+    title: 'Photo check',
+    body: 'An AI looks at the photo — waste type, how much, whether it needs the authorities — with a confidence score for each.',
   },
   {
     step: '03',
     title: 'Human decision',
-    body: 'Low confidence or hazardous waste is escalated. An admin accepts or corrects, then dispatches or sends guidance.',
+    body: 'An admin weighs that advice and decides: send a cleaner, resolve, escalate, ask for more information or dismiss.',
   },
   {
     step: '04',
     title: 'Cleanup + proof',
-    body: 'The assigned cleaner uploads a photo of the cleaned spot. Rejected photos go back for another try.',
+    body: 'The cleaner uploads an after photo, and an AI compares it with the citizen’s before photo.',
   },
   {
     step: '05',
     title: 'Verified & measured',
-    body: 'An admin verifies the proof and the case closes. Every step lands in the event log for process mining.',
+    body: 'An admin approves or rejects the proof. Every step lands in the event log for process mining.',
   },
 ]
 
@@ -126,7 +126,7 @@ function Home() {
           {[
             'Let the AI resolve or dispatch anything on its own.',
             'Route hazardous or medical waste without a human check.',
-            'Close a cleanup without a verified photo.',
+            'Approve a cleanup on the AI’s word — a person checks every proof photo.',
             'Invent a prediction when the AI service has not sent one.',
           ].map((item) => (
             <li key={item} className="card card-pad flex gap-2">
