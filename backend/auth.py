@@ -128,9 +128,9 @@ def register_user(conn: sqlite3.Connection, body: RegisterRequest) -> RegisterRe
 
     hashed = hash_password(body.password)
     cur = conn.execute(
-        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'customer')",
-        (body.name, body.email, hashed),
-    )
+    "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'citizen')",
+    (body.name, body.email, hashed),
+)
     conn.commit()
     user_id = cur.lastrowid
     row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
