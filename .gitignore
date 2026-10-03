@@ -5,3 +5,7 @@ __pycache__/
 *.db
 chroma_db/
 .pytest_cache/
+
+# Runtime-uploaded test/user images
+backend/uploads/
+smarttracker-project-review.zip

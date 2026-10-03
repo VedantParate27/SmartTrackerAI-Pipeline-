@@ -84,12 +84,25 @@ def process_waste_image(
         result["review_reasons"].append("classification_error")
         return result
 
-    # Step 2: If the image is not usable, request human review
+    # Step 2: Check whether this is a recurring problem
+    result["recurring_flag"] = (
+        prior_reports_at_location >= RECURRING_REPORT_THRESHOLD
+    )
+
+    # Step 3: If the image is not usable, request human review
     if not result["image_usable"]:
         result["needs_human_review"] = True
         result["review_reasons"].append(
             f"unusable_image: {result['unusable_reason']}"
         )
+
+        if result["recurring_flag"]:
+            result["escalate_to_authority"] = True
+            result["review_reasons"].append(
+                f"recurring_location: "
+                f"{prior_reports_at_location} prior reports"
+            )
+
         return result
 
     # Step 3: Check confidence on waste type and severity
@@ -115,11 +128,6 @@ def process_waste_image(
                 f"low_severity_confidence: "
                 f"{result['severity_confidence']:.2f}"
             )
-
-    # Step 4: Check whether this is a recurring problem
-    result["recurring_flag"] = (
-        prior_reports_at_location >= RECURRING_REPORT_THRESHOLD
-    )
 
     # Step 5: Decide whether to escalate
     if (

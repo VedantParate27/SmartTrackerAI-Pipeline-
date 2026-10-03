@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from db import get_conn
 from ai_pipeline import (
@@ -28,8 +28,10 @@ from auth import (
     login_user,
     get_current_user,
     require_role,
+    hash_password,
 )
 from waste_pipeline import process_waste_image
+from cleanup_verifier import verify_cleanup
 
 
 app = FastAPI(title="SmartTracker AI")
@@ -132,8 +134,91 @@ class ComplaintOut(BaseModel):
     updated_at: str
 
 
+class CleanerCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class WasteReviewIn(BaseModel):
+    decision: str
+    cleaner_id: Optional[int] = None
+    notes: Optional[str] = None
+
+    @field_validator("decision")
+    @classmethod
+    def decision_must_be_valid(cls, value):
+        if value not in ("approve_cleanup", "reject"):
+            raise ValueError(
+                "decision must be 'approve_cleanup' or 'reject'"
+            )
+        return value
+
+
+class CleanupVerificationIn(BaseModel):
+    decision: str
+    notes: Optional[str] = None
+
+    @field_validator("decision")
+    @classmethod
+    def decision_must_be_valid(cls, value):
+        if value not in ("approve", "reject"):
+            raise ValueError(
+                "decision must be 'approve' or 'reject'"
+            )
+        return value
+
+
 class ApprovalIn(BaseModel):
     final_response: str
+
+
+@app.post("/admin/cleaners", status_code=201)
+def create_cleaner(
+    payload: CleanerCreate,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "admin")
+
+    existing = conn.execute(
+        "SELECT id FROM users WHERE email = ?",
+        (payload.email,),
+    ).fetchone()
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="An account with this email address already exists.",
+        )
+
+    password_hash = hash_password(payload.password)
+
+    cur = conn.execute(
+        """
+        INSERT INTO users (
+            name,
+            email,
+            password_hash,
+            role
+        )
+        VALUES (?, ?, ?, 'cleaner')
+        """,
+        (
+            payload.name,
+            payload.email,
+            password_hash,
+        ),
+    )
+
+    conn.commit()
+
+    return {
+        "id": cur.lastrowid,
+        "name": payload.name,
+        "email": payload.email,
+        "role": "cleaner",
+    }
 
 
 # ---------- auth: register / login ----------
@@ -602,6 +687,706 @@ def admin_queue(
 ).fetchall()
 
     return [dict(r) for r in rows]
+
+
+# ---------- admin: waste complaint review ----------
+
+@app.post("/admin/complaints/{complaint_id}/review")
+def review_waste_complaint(
+    complaint_id: int,
+    payload: WasteReviewIn,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "admin")
+
+    complaint = conn.execute(
+        """
+        SELECT id,
+               status,
+               image_path,
+               waste_type,
+               severity,
+               needs_human_review,
+               escalate_to_authority
+        FROM complaints
+        WHERE id = ?
+        """,
+        (complaint_id,),
+    ).fetchone()
+
+    if not complaint:
+        raise HTTPException(
+            status_code=404,
+            detail="complaint not found",
+        )
+
+    if complaint["status"] != "awaiting_review":
+        raise HTTPException(
+            status_code=409,
+            detail="complaint is not awaiting review",
+        )
+
+    if not complaint["image_path"] or not complaint["waste_type"]:
+        raise HTTPException(
+            status_code=400,
+            detail="complaint is not a waste-management case",
+        )
+
+    if payload.decision == "approve_cleanup":
+        if payload.cleaner_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="cleaner_id is required when approving cleanup",
+            )
+
+        cleaner = conn.execute(
+            """
+            SELECT id
+            FROM users
+            WHERE id = ?
+              AND role = 'cleaner'
+            """,
+            (payload.cleaner_id,),
+        ).fetchone()
+
+        if not cleaner:
+            raise HTTPException(
+                status_code=400,
+                detail="selected user is not a valid cleaner",
+            )
+
+        existing_task = conn.execute(
+            """
+            SELECT id
+            FROM cleanup_tasks
+            WHERE complaint_id = ?
+            """,
+            (complaint_id,),
+        ).fetchone()
+
+        if existing_task:
+            raise HTTPException(
+                status_code=409,
+                detail="cleanup task already exists for this complaint",
+            )
+
+        conn.execute(
+            """
+            INSERT INTO cleanup_tasks (
+                complaint_id,
+                cleaner_id,
+                assigned_by,
+                status,
+                notes
+            )
+            VALUES (?, ?, ?, 'assigned', ?)
+            """,
+            (
+                complaint_id,
+                payload.cleaner_id,
+                current_user["id"],
+                payload.notes,
+            ),
+        )
+
+        conn.execute(
+            """
+            UPDATE complaints
+            SET status = 'assigned',
+                needs_human_review = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (complaint_id,),
+        )
+
+        conn.commit()
+
+        task = conn.execute(
+            """
+            SELECT id,
+                   complaint_id,
+                   cleaner_id,
+                   assigned_by,
+                   status,
+                   notes,
+                   created_at,
+                   updated_at
+            FROM cleanup_tasks
+            WHERE complaint_id = ?
+            """,
+            (complaint_id,),
+        ).fetchone()
+
+        return {
+            "complaint_id": complaint_id,
+            "status": "assigned",
+            "cleanup_task": dict(task),
+        }
+
+    conn.execute(
+        """
+        UPDATE complaints
+        SET needs_human_review = 1,
+            review_reasons = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            json.dumps(
+                [
+                    "admin_rejected_waste_review"
+                    + (f": {payload.notes}" if payload.notes else "")
+                ]
+            ),
+            complaint_id,
+        ),
+    )
+
+    conn.commit()
+
+    return {
+        "complaint_id": complaint_id,
+        "status": "awaiting_review",
+        "cleanup_task": None,
+    }
+
+
+
+
+CLEANUP_PROOF_UPLOAD_DIR = (
+    PROJECT_ROOT / "backend" / "uploads" / "cleanup_proofs"
+)
+
+
+def _save_cleanup_proof_image(image_bytes: bytes, mime_type: str) -> str:
+    CLEANUP_PROOF_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    extension = ALLOWED_IMAGE_MIME_TYPES[mime_type]
+    filename = f"{uuid.uuid4().hex}{extension}"
+    file_path = CLEANUP_PROOF_UPLOAD_DIR / filename
+
+    file_path.write_bytes(image_bytes)
+
+    return str(
+        Path("backend") / "uploads" / "cleanup_proofs" / filename
+    )
+
+
+# ---------- cleaner: task lifecycle ----------
+
+@app.post("/cleaner/tasks/{task_id}/start")
+def start_cleanup_task(
+    task_id: int,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "cleaner")
+
+    task = conn.execute(
+        """
+        SELECT id,
+               complaint_id,
+               cleaner_id,
+               assigned_by,
+               status,
+               notes,
+               created_at,
+               updated_at
+        FROM cleanup_tasks
+        WHERE id = ?
+          AND cleaner_id = ?
+        """,
+        (task_id, current_user["id"]),
+    ).fetchone()
+
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail="cleanup task not found",
+        )
+
+    if task["status"] != "assigned":
+        raise HTTPException(
+            status_code=409,
+            detail="cleanup task is not in assigned state",
+        )
+
+    conn.execute(
+        """
+        UPDATE cleanup_tasks
+        SET status = 'in_progress',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (task_id,),
+    )
+
+    conn.execute(
+        """
+        UPDATE complaints
+        SET status = 'in_progress',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (task["complaint_id"],),
+    )
+
+    conn.commit()
+
+    updated_task = conn.execute(
+        """
+        SELECT id,
+               complaint_id,
+               cleaner_id,
+               assigned_by,
+               status,
+               notes,
+               created_at,
+               updated_at
+        FROM cleanup_tasks
+        WHERE id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+
+    return dict(updated_task)
+
+
+
+@app.post("/cleaner/tasks/{task_id}/proof")
+async def upload_cleanup_proof(
+    task_id: int,
+    image: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "cleaner")
+
+    task = conn.execute(
+        """
+        SELECT id,
+               complaint_id,
+               cleaner_id,
+               status
+        FROM cleanup_tasks
+        WHERE id = ?
+          AND cleaner_id = ?
+        """,
+        (task_id, current_user["id"]),
+    ).fetchone()
+
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail="cleanup task not found",
+        )
+
+    if task["status"] != "in_progress":
+        raise HTTPException(
+            status_code=409,
+            detail="cleanup task must be in_progress before proof upload",
+        )
+
+    if image.content_type not in ALLOWED_IMAGE_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "unsupported image type. "
+                "Allowed types: image/jpeg, image/png, image/webp"
+            ),
+        )
+
+    image_bytes = await image.read()
+
+    if not image_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="uploaded image is empty",
+        )
+
+    if len(image_bytes) > MAX_IMAGE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="uploaded image exceeds 10 MB limit",
+        )
+
+    existing_proof = conn.execute(
+        """
+        SELECT id
+        FROM cleanup_proofs
+        WHERE task_id = ?
+          AND verification_status IN ('pending', 'needs_review')
+        """,
+        (task_id,),
+    ).fetchone()
+
+    if existing_proof:
+        raise HTTPException(
+            status_code=409,
+            detail="cleanup proof has already been submitted",
+        )
+
+    complaint = conn.execute(
+        """
+        SELECT id,
+               image_path,
+               image_mime_type
+        FROM complaints
+        WHERE id = ?
+        """,
+        (task["complaint_id"],),
+    ).fetchone()
+
+    if not complaint:
+        raise HTTPException(
+            status_code=404,
+            detail="associated complaint not found",
+        )
+
+    if not complaint["image_path"]:
+        raise HTTPException(
+            status_code=400,
+            detail="complaint does not have a before image",
+        )
+
+    before_path = PROJECT_ROOT / Path(complaint["image_path"])
+
+    if not before_path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="original complaint image could not be found",
+        )
+
+    proof_path = _save_cleanup_proof_image(
+        image_bytes,
+        image.content_type,
+    )
+
+    proof_file = PROJECT_ROOT / Path(proof_path)
+
+    try:
+        before_bytes = before_path.read_bytes()
+
+        verification = verify_cleanup(
+            before_bytes,
+            image_bytes,
+            before_mime=complaint["image_mime_type"] or "image/jpeg",
+            after_mime=image.content_type,
+        )
+
+    except Exception as exc:
+        if proof_file.exists():
+            proof_file.unlink()
+
+        raise HTTPException(
+            status_code=502,
+            detail=f"cleanup verification failed: {exc}",
+        )
+
+    verification_reason = verification["reasoning"]
+
+    if verification.get("unusable_reason"):
+        verification_reason += (
+            f" Unusable reason: "
+            f"{verification['unusable_reason']}"
+        )
+
+    if verification.get("admin_review_recommended"):
+        verification_reason += " Admin review recommended by AI."
+
+    conn.execute(
+        """
+        INSERT INTO cleanup_proofs (
+            task_id,
+            image_path,
+            image_mime_type,
+            verification_status,
+            verification_confidence,
+            verification_reason
+        )
+        VALUES (?, ?, ?, 'pending', ?, ?)
+        """,
+        (
+            task_id,
+            proof_path,
+            image.content_type,
+            float(verification["confidence"]),
+            verification_reason,
+        ),
+    )
+
+    conn.execute(
+        """
+        UPDATE cleanup_tasks
+        SET status = 'verification',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (task_id,),
+    )
+
+    conn.execute(
+        """
+        UPDATE complaints
+        SET status = 'verification',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (task["complaint_id"],),
+    )
+
+    conn.commit()
+
+    proof = conn.execute(
+        """
+        SELECT id,
+               task_id,
+               image_path,
+               image_mime_type,
+               verification_status,
+               verification_confidence,
+               verification_reason,
+               uploaded_at,
+               reviewed_at,
+               reviewed_by
+        FROM cleanup_proofs
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+
+    return {
+        "task_id": task_id,
+        "complaint_id": task["complaint_id"],
+        "task_status": "verification",
+        "complaint_status": "verification",
+        "ai_verification": {
+            "after_image_usable": verification["after_image_usable"],
+            "cleanup_appears_complete": verification[
+                "cleanup_appears_complete"
+            ],
+            "confidence": verification["confidence"],
+            "admin_review_recommended": verification[
+                "admin_review_recommended"
+            ],
+        },
+        "proof": dict(proof),
+    }
+
+
+
+# ---------- admin: verify cleanup proof ----------
+
+@app.post("/admin/cleanup-tasks/{task_id}/verify")
+def verify_cleanup_task(
+    task_id: int,
+    payload: CleanupVerificationIn,
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "admin")
+
+    task = conn.execute(
+        """
+        SELECT id,
+               complaint_id,
+               cleaner_id,
+               assigned_by,
+               status
+        FROM cleanup_tasks
+        WHERE id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail="cleanup task not found",
+        )
+
+    if task["status"] != "verification":
+        raise HTTPException(
+            status_code=409,
+            detail="cleanup task is not awaiting verification",
+        )
+
+    proof = conn.execute(
+        """
+        SELECT id,
+               task_id,
+               image_path,
+               image_mime_type,
+               verification_status,
+               verification_confidence,
+               verification_reason,
+               uploaded_at,
+               reviewed_at,
+               reviewed_by
+        FROM cleanup_proofs
+        WHERE task_id = ?
+        ORDER BY uploaded_at DESC
+        LIMIT 1
+        """,
+        (task_id,),
+    ).fetchone()
+
+    if not proof:
+        raise HTTPException(
+            status_code=404,
+            detail="cleanup proof not found",
+        )
+
+    if proof["verification_status"] not in ("pending", "needs_review"):
+        raise HTTPException(
+            status_code=409,
+            detail="cleanup proof has already been reviewed",
+        )
+
+    now_status = payload.decision
+
+    if now_status == "approve":
+        conn.execute(
+            """
+            UPDATE cleanup_proofs
+            SET verification_status = 'approved',
+                verification_reason = CASE
+                    WHEN ? IS NULL OR ? = ''
+                    THEN verification_reason
+                    ELSE verification_reason || ' Admin approval: ' || ?
+                END,
+                reviewed_at = CURRENT_TIMESTAMP,
+                reviewed_by = ?
+            WHERE id = ?
+            """,
+            (
+                payload.notes,
+                payload.notes,
+                payload.notes,
+                current_user["id"],
+                proof["id"],
+            ),
+        )
+
+        conn.execute(
+            """
+            UPDATE cleanup_tasks
+            SET status = 'completed',
+                completed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (task_id,),
+        )
+
+        conn.execute(
+            """
+            UPDATE complaints
+            SET status = 'resolved',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (task["complaint_id"],),
+        )
+
+    else:
+        conn.execute(
+            """
+            UPDATE cleanup_proofs
+            SET verification_status = 'rejected',
+                verification_reason = CASE
+                    WHEN ? IS NULL OR ? = ''
+                    THEN verification_reason
+                    ELSE verification_reason || ' Admin rejection: ' || ?
+                END,
+                reviewed_at = CURRENT_TIMESTAMP,
+                reviewed_by = ?
+            WHERE id = ?
+            """,
+            (
+                payload.notes,
+                payload.notes,
+                payload.notes,
+                current_user["id"],
+                proof["id"],
+            ),
+        )
+
+        conn.execute(
+            """
+            UPDATE cleanup_tasks
+            SET status = 'assigned',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (task_id,),
+        )
+
+        conn.execute(
+            """
+            UPDATE complaints
+            SET status = 'in_progress',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (task["complaint_id"],),
+        )
+
+    conn.commit()
+
+    updated_task = conn.execute(
+        """
+        SELECT id,
+               complaint_id,
+               cleaner_id,
+               assigned_by,
+               status,
+               notes,
+               created_at,
+               updated_at,
+               completed_at
+        FROM cleanup_tasks
+        WHERE id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+
+    updated_proof = conn.execute(
+        """
+        SELECT id,
+               task_id,
+               image_path,
+               image_mime_type,
+               verification_status,
+               verification_confidence,
+               verification_reason,
+               uploaded_at,
+               reviewed_at,
+               reviewed_by
+        FROM cleanup_proofs
+        WHERE id = ?
+        """,
+        (proof["id"],),
+    ).fetchone()
+
+    complaint = conn.execute(
+        """
+        SELECT id,
+               status
+        FROM complaints
+        WHERE id = ?
+        """,
+        (task["complaint_id"],),
+    ).fetchone()
+
+    return {
+        "task": dict(updated_task),
+        "proof": dict(updated_proof),
+        "complaint": dict(complaint),
+        "admin_decision": payload.decision,
+    }
 
 
 # ---------- admin: approve / edit response ----------

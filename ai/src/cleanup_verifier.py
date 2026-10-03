@@ -70,7 +70,7 @@ def verify_cleanup(before_image_bytes: bytes, after_image_bytes: bytes,
                 )
                 result = response.parsed.model_dump()
                 # Safety net: low confidence always forces review, regardless of the model's own flag
-                if result["confidence"] < CLEANUP_CONFIDENCE_THRESHOLD:
+                if result["confidence"] < CLEANUP_REVIEW_THRESHOLD:
                     result["admin_review_recommended"] = True
                 return result
             except Exception as e:
