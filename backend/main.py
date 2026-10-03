@@ -221,6 +221,30 @@ def create_cleaner(
     }
 
 
+@app.get("/admin/cleaners")
+def list_cleaners(
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "admin")
+
+    rows = conn.execute(
+        """
+        SELECT id,
+               name,
+               email,
+               role,
+               department,
+               created_at
+        FROM users
+        WHERE role = 'cleaner'
+        ORDER BY name
+        """
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
 # ---------- auth: register / login ----------
 
 @app.post("/auth/register", response_model=RegisterResponse, status_code=201)
@@ -876,6 +900,45 @@ def _save_cleanup_proof_image(image_bytes: bytes, mime_type: str) -> str:
 
 # ---------- cleaner: task lifecycle ----------
 
+@app.get("/cleaner/tasks")
+def list_cleaner_tasks(
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "cleaner")
+
+    rows = conn.execute(
+        """
+        SELECT t.id,
+               t.complaint_id,
+               t.cleaner_id,
+               t.assigned_by,
+               t.status,
+               t.notes,
+               t.created_at,
+               t.updated_at,
+               t.completed_at,
+               c.tracking_id,
+               c.complaint_text,
+               c.waste_type,
+               c.severity,
+               c.image_path,
+               c.location_type,
+               c.latitude,
+               c.longitude,
+               c.manual_address,
+               c.status AS complaint_status
+        FROM cleanup_tasks t
+        JOIN complaints c ON c.id = t.complaint_id
+        WHERE t.cleaner_id = ?
+        ORDER BY t.created_at
+        """,
+        (current_user["id"],),
+    ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
 @app.post("/cleaner/tasks/{task_id}/start")
 def start_cleanup_task(
     task_id: int,
@@ -1177,6 +1240,61 @@ async def upload_cleanup_proof(
         "proof": dict(proof),
     }
 
+
+
+# ---------- admin: cleanup task queue ----------
+
+@app.get("/admin/cleanup-tasks")
+def list_cleanup_tasks(
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "admin")
+
+    rows = conn.execute(
+        """
+        SELECT t.id,
+               t.complaint_id,
+               t.cleaner_id,
+               t.assigned_by,
+               t.status,
+               t.notes,
+               t.created_at,
+               t.updated_at,
+               t.completed_at,
+               c.tracking_id,
+               c.complaint_text,
+               c.waste_type,
+               c.severity,
+               c.image_path,
+               c.status          AS complaint_status,
+               u.name            AS cleaner_name,
+               u.email           AS cleaner_email,
+               p.id              AS proof_id,
+               p.image_path      AS proof_image_path,
+               p.image_mime_type AS proof_image_mime_type,
+               p.verification_status,
+               p.verification_confidence,
+               p.verification_reason,
+               p.uploaded_at,
+               p.reviewed_at,
+               p.reviewed_by
+        FROM cleanup_tasks t
+        JOIN complaints c ON c.id = t.complaint_id
+        JOIN users u      ON u.id = t.cleaner_id
+        LEFT JOIN cleanup_proofs p
+            ON p.id = (
+                SELECT id
+                FROM cleanup_proofs
+                WHERE task_id = t.id
+                ORDER BY uploaded_at DESC
+                LIMIT 1
+            )
+        ORDER BY t.created_at
+        """
+    ).fetchall()
+
+    return [dict(r) for r in rows]
 
 
 # ---------- admin: verify cleanup proof ----------
