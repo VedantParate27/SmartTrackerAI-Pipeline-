@@ -1153,6 +1153,8 @@ async def upload_cleanup_proof(
                reviewed_by
         FROM cleanup_proofs
         WHERE task_id = ?
+        ORDER BY uploaded_at DESC
+        LIMIT 1
         """,
         (task_id,),
     ).fetchone()
