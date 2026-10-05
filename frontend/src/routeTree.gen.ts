@@ -11,11 +11,14 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as CleanerRouteImport } from './routes/cleaner'
 import { Route as GuideRouteImport } from './routes/guide'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as SubmitRouteImport } from './routes/submit'
 import { Route as TrackRouteImport } from './routes/track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminKnowledgeRouteImport } from './routes/admin.knowledge'
+import { Route as AdminVerificationRouteImport } from './routes/admin.verification'
 import { Route as AdminCasesCaseIdRouteImport } from './routes/admin.cases.$caseId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -28,9 +31,19 @@ const AdminRoute = AdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CleanerRoute = CleanerRouteImport.update({
+  id: '/cleaner',
+  path: '/cleaner',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GuideRoute = GuideRouteImport.update({
   id: '/guide',
   path: '/guide',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SubmitRoute = SubmitRouteImport.update({
@@ -53,6 +66,11 @@ const AdminKnowledgeRoute = AdminKnowledgeRouteImport.update({
   path: '/knowledge',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminVerificationRoute = AdminVerificationRouteImport.update({
+  id: '/verification',
+  path: '/verification',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminCasesCaseIdRoute = AdminCasesCaseIdRouteImport.update({
   id: '/cases/$caseId',
   path: '/cases/$caseId',
@@ -62,19 +80,25 @@ const AdminCasesCaseIdRoute = AdminCasesCaseIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
+  '/cleaner': typeof CleanerRoute
   '/guide': typeof GuideRoute
+  '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
   '/admin/knowledge': typeof AdminKnowledgeRoute
+  '/admin/verification': typeof AdminVerificationRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/cleaner': typeof CleanerRoute
   '/guide': typeof GuideRoute
+  '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
   '/admin/knowledge': typeof AdminKnowledgeRoute
+  '/admin/verification': typeof AdminVerificationRoute
   '/admin': typeof AdminIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
 }
@@ -82,10 +106,13 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
+  '/cleaner': typeof CleanerRoute
   '/guide': typeof GuideRoute
+  '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
   '/admin/knowledge': typeof AdminKnowledgeRoute
+  '/admin/verification': typeof AdminVerificationRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
 }
@@ -94,29 +121,38 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admin'
+    | '/cleaner'
     | '/guide'
+    | '/login'
     | '/submit'
     | '/track'
     | '/admin/knowledge'
+    | '/admin/verification'
     | '/admin/'
     | '/admin/cases/$caseId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/cleaner'
     | '/guide'
+    | '/login'
     | '/submit'
     | '/track'
     | '/admin/knowledge'
+    | '/admin/verification'
     | '/admin'
     | '/admin/cases/$caseId'
   id:
     | '__root__'
     | '/'
     | '/admin'
+    | '/cleaner'
     | '/guide'
+    | '/login'
     | '/submit'
     | '/track'
     | '/admin/knowledge'
+    | '/admin/verification'
     | '/admin/'
     | '/admin/cases/$caseId'
   fileRoutesById: FileRoutesById
@@ -124,7 +160,9 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
+  CleanerRoute: typeof CleanerRoute
   GuideRoute: typeof GuideRoute
+  LoginRoute: typeof LoginRoute
   SubmitRoute: typeof SubmitRoute
   TrackRoute: typeof TrackRoute
 }
@@ -145,11 +183,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/cleaner': {
+      id: '/cleaner'
+      path: '/cleaner'
+      fullPath: '/cleaner'
+      preLoaderRoute: typeof CleanerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/guide': {
       id: '/guide'
       path: '/guide'
       fullPath: '/guide'
       preLoaderRoute: typeof GuideRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/submit': {
@@ -180,6 +232,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminKnowledgeRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/verification': {
+      id: '/admin/verification'
+      path: '/verification'
+      fullPath: '/admin/verification'
+      preLoaderRoute: typeof AdminVerificationRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/cases/$caseId': {
       id: '/admin/cases/$caseId'
       path: '/cases/$caseId'
@@ -192,12 +251,14 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteChildren {
   AdminKnowledgeRoute: typeof AdminKnowledgeRoute
+  AdminVerificationRoute: typeof AdminVerificationRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCasesCaseIdRoute: typeof AdminCasesCaseIdRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminKnowledgeRoute: AdminKnowledgeRoute,
+  AdminVerificationRoute: AdminVerificationRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminCasesCaseIdRoute: AdminCasesCaseIdRoute,
 }
@@ -207,7 +268,9 @@ const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
+  CleanerRoute: CleanerRoute,
   GuideRoute: GuideRoute,
+  LoginRoute: LoginRoute,
   SubmitRoute: SubmitRoute,
   TrackRoute: TrackRoute,
 }

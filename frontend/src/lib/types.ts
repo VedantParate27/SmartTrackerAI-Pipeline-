@@ -10,6 +10,7 @@ export type CaseStatus =
   | 'Manual Triage'
   | 'Assigned to Department'
   | 'In Progress'
+  | 'Verification'
   | 'Escalated'
   | 'Resolved'
   | 'Closed'
@@ -176,6 +177,10 @@ export interface Complaint {
   duplicateOf: string | null
   comments: CaseComment[]
   audit: AuditEvent[]
+  imagePath?: string | null
+  wasteType?: string | null
+  severity?: string | null
+  aiReasoning?: string | null
 }
 
 /** Document Guide: required proofs, steps, fees, time, source, last updated. */

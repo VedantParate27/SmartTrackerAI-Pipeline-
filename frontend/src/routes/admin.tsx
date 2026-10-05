@@ -72,6 +72,13 @@ function AdminLayout() {
           Case queue
         </Link>
         <Link
+          to="/admin/verification"
+          className="nav-link shrink-0"
+          activeProps={{ className: 'nav-link is-active shrink-0' }}
+        >
+          Cleanup verification queue
+        </Link>
+        <Link
           to="/admin/knowledge"
           className="nav-link shrink-0"
           activeProps={{ className: 'nav-link is-active shrink-0' }}

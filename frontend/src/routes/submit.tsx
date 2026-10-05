@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { Callout, Field, SectionCard } from '#/components/ui'
+import { Callout, Field, StatusPill } from '#/components/ui'
 import { formatBytes } from '#/lib/format'
-import { submitComplaint } from '#/lib/store'
-import { CONFIG, PRIORITIES } from '#/lib/taxonomy'
-import type { Attachment, ComplaintLocation, Priority } from '#/lib/types'
+import { submitWasteComplaint } from '#/lib/api'
+import { PRIORITIES } from '#/lib/taxonomy'
+import type { Complaint, ComplaintLocation, Priority } from '#/lib/types'
 
 export const Route = createFileRoute('/submit')({ component: SubmitPage })
 
@@ -25,12 +25,13 @@ const EMPTY: FormValues = {
 }
 
 const MIN_TEXT = 30
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024 // 10 MB
 
 type GpsStatus = 'idle' | 'requesting' | 'granted' | 'denied' | 'unavailable'
 
-/** FR-02: mandatory fields, contact format, attachment type and size. */
-function validate(values: FormValues) {
-  const errors: Partial<Record<keyof FormValues, string>> = {}
+function validate(values: FormValues, imageFile: File | null) {
+  const errors: Partial<Record<keyof FormValues | 'image', string>> = {}
 
   if (values.requesterName.trim().length < 2) {
     errors.requesterName = 'Enter your name (at least 2 characters).'
@@ -47,7 +48,16 @@ function validate(values: FormValues) {
   }
 
   if (values.text.trim().length < MIN_TEXT) {
-    errors.text = `Describe the problem in at least ${MIN_TEXT} characters so it can be classified.`
+    errors.text = `Describe the problem in at least ${MIN_TEXT} characters.`
+  }
+
+  if (!imageFile) {
+    errors.image = 'An image of the waste issue is required.'
+  } else if (!ALLOWED_IMAGE_TYPES.includes(imageFile.type)) {
+    errors.image =
+      'Unsupported image type. Only JPEG, PNG, and WEBP are accepted.'
+  } else if (imageFile.size > MAX_IMAGE_BYTES) {
+    errors.image = `Image is too large. Maximum allowed size is ${formatBytes(MAX_IMAGE_BYTES)}.`
   }
 
   if (!values.consent) {
@@ -58,47 +68,19 @@ function validate(values: FormValues) {
   return errors
 }
 
-function validateFiles(files: File[]) {
-  const problems: string[] = []
-  const accepted: Attachment[] = []
-
-  if (files.length > CONFIG.maxAttachments) {
-    problems.push(`At most ${CONFIG.maxAttachments} attachments are accepted.`)
-  }
-
-  for (const file of files.slice(0, CONFIG.maxAttachments)) {
-    if (!CONFIG.allowedAttachmentTypes.includes(file.type)) {
-      problems.push(
-        `"${file.name}" was rejected: only PDF, TXT, PNG and JPG are accepted.`,
-      )
-      continue
-    }
-    if (file.size > CONFIG.maxAttachmentBytes) {
-      problems.push(
-        `"${file.name}" was rejected: ${formatBytes(file.size)} exceeds the ${formatBytes(CONFIG.maxAttachmentBytes)} limit.`,
-      )
-      continue
-    }
-    accepted.push({ name: file.name, size: file.size, type: file.type })
-  }
-
-  return { problems, accepted }
-}
-
 function SubmitPage() {
   const [values, setValues] = useState<FormValues>(EMPTY)
+  const [imageFile, setImageFile] = useState<File | null>(null)
   const [errors, setErrors] = useState<
-    Partial<Record<keyof FormValues, string>>
+    Partial<Record<keyof FormValues | 'image', string>>
   >({})
-  const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [fileProblems, setFileProblems] = useState<string[]>([])
-  const [submittedId, setSubmittedId] = useState<string | null>(null)
+  const [serverError, setServerError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submittedComplaint, setSubmittedComplaint] =
+    useState<Complaint | null>(null)
   const [failedAttempts, setFailedAttempts] = useState(0)
   const errorSummary = useRef<HTMLDivElement>(null)
 
-  // Location (Phase 3): GPS preferred, manual address as fallback. Neither
-  // is required — the form must stay usable when GPS is unavailable/denied
-  // and when the reporter simply doesn't have a location to share.
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>('idle')
   const [gpsCoords, setGpsCoords] = useState<{
     latitude: number
@@ -156,8 +138,6 @@ function SubmitPage() {
     return null
   }
 
-  // Focus the summary after a rejected submit, once it has rendered (NFR-10).
-  // Keyed on the attempt count so typing a fix never steals focus back.
   useEffect(() => {
     if (failedAttempts > 0) errorSummary.current?.focus()
   }, [failedAttempts])
@@ -170,16 +150,11 @@ function SubmitPage() {
     setErrors((current) => ({ ...current, [key]: undefined }))
   }
 
-  function onFiles(fileList: FileList | null) {
-    const files = fileList ? Array.from(fileList) : []
-    const { problems, accepted } = validateFiles(files)
-    setFileProblems(problems)
-    setAttachments(accepted)
-  }
-
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault()
-    const found = validate(values)
+    setServerError(null)
+
+    const found = validate(values, imageFile)
     setErrors(found)
 
     if (Object.keys(found).length > 0) {
@@ -187,26 +162,47 @@ function SubmitPage() {
       return
     }
 
-    try {
-      const complaint = await submitComplaint({
-        requesterName: values.requesterName.trim(),
-        contact: values.contact.trim(),
-        text: values.text.trim(),
-        priority: values.priority,
-        attachments,
-        location: currentLocation(),
-      })
+    setSubmitting(true)
 
-      setSubmittedId(complaint.id)
+    try {
+      const formData = new FormData()
+      formData.append('complaint_text', values.text.trim())
+
+      if (imageFile) {
+        formData.append('image', imageFile)
+      }
+
+      const loc = currentLocation()
+      if (loc) {
+        if (
+          loc.type === 'gps' &&
+          loc.latitude != null &&
+          loc.longitude != null
+        ) {
+          formData.append('location_type', 'gps')
+          formData.append('latitude', String(loc.latitude))
+          formData.append('longitude', String(loc.longitude))
+        } else if (loc.type === 'manual' && loc.manualAddress) {
+          formData.append('location_type', 'manual')
+          formData.append('manual_address', loc.manualAddress)
+        }
+      }
+
+      const complaint = await submitWasteComplaint(formData)
+      setSubmittedComplaint(complaint)
     } catch (error) {
       console.error('Failed to submit complaint:', error)
-      setErrors({
-        text: 'Unable to submit the complaint. Please try again.',
-      })
+      setServerError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to submit the complaint. Please try again.',
+      )
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  if (submittedId) {
+  if (submittedComplaint) {
     return (
       <main id="main" className="wrap page max-w-2xl">
         <p className="kicker">Acknowledgement</p>
@@ -215,13 +211,20 @@ function SubmitPage() {
         </h1>
 
         <div className="card card-pad mt-5">
-          <span className="kicker">Tracking reference</span>
-          <p className="mono mt-1 text-xl font-extrabold tracking-wide sm:text-2xl">
-            {submittedId}
-          </p>
-          <p className="hint">
-            Keep this reference. You will need it to check the status of the
-            case.
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="kicker">Tracking reference</span>
+              <p className="mono mt-1 text-xl font-extrabold tracking-wide sm:text-2xl">
+                {submittedComplaint.id}
+              </p>
+            </div>
+            <div>
+              <StatusPill status={submittedComplaint.status} />
+            </div>
+          </div>
+          <p className="hint mt-2">
+            Keep this reference. You will need it to check the status of your
+            grievance.
           </p>
         </div>
 
@@ -229,20 +232,20 @@ function SubmitPage() {
           <Callout tone="info" title="What happens next">
             <ol className="m-0 mt-1 list-decimal space-y-1 pl-4">
               <li>
-                Automated analysis classifies the complaint and finds the
-                responsible department.
+                Automated AI vision analysis evaluates the complaint image and
+                determines waste severity.
               </li>
               <li>
-                Relevant active policy sections are retrieved and a draft reply
-                is prepared with citations.
+                If verification or human review is required, the report is
+                routed for admin review.
               </li>
               <li>
-                A support administrator reviews everything and approves, edits
-                or reassigns the case.
+                An administrator assigns a cleaner team or verifies the task
+                upon completion.
               </li>
               <li>
-                You receive the approved response on the contact detail you
-                provided.
+                You can track updates in real-time using your tracking
+                reference.
               </li>
             </ol>
           </Callout>
@@ -251,7 +254,7 @@ function SubmitPage() {
         <div className="mt-5 flex flex-col gap-2 sm:flex-row">
           <Link
             to="/track"
-            search={{ id: submittedId }}
+            search={{ id: submittedComplaint.id }}
             className="btn btn-primary btn-block sm:w-auto"
           >
             Track this case
@@ -261,9 +264,9 @@ function SubmitPage() {
             className="btn btn-block sm:w-auto"
             onClick={() => {
               setValues(EMPTY)
-              setAttachments([])
-              setFileProblems([])
-              setSubmittedId(null)
+              setImageFile(null)
+              setSubmittedComplaint(null)
+              setServerError(null)
               setFailedAttempts(0)
               clearGpsLocation()
               setManualAddress('')
@@ -285,18 +288,24 @@ function SubmitPage() {
         Submit a grievance
       </h1>
       <p className="mt-2 text-sm leading-relaxed muted">
-        Write in your own words. You do not need to know which department
-        handles the issue — that is worked out for you.
+        Describe the issue and upload a clear photo. AI vision will automatically
+        detect waste type and severity.
       </p>
 
       <div className="mt-5">
         <Callout tone="info" title="Privacy notice">
-          Your name, contact detail and complaint text are stored so the case
-          can be routed, answered and audited. Contact details are masked before
-          any text is sent to a language model. Only authorised staff of the
-          assigned department can open your case.
+          Your complaint text and image are stored so the case can be routed,
+          analyzed, and resolved by cleanup teams.
         </Callout>
       </div>
+
+      {serverError ? (
+        <div className="mt-4">
+          <Callout tone="danger" title="Submission failed">
+            {serverError}
+          </Callout>
+        </div>
+      ) : null}
 
       {errorList.length > 0 ? (
         <div
@@ -331,6 +340,7 @@ function SubmitPage() {
             className="input"
             autoComplete="name"
             value={values.requesterName}
+            disabled={submitting}
             aria-invalid={Boolean(errors.requesterName)}
             aria-describedby={
               errors.requesterName ? 'requesterName-error' : undefined
@@ -353,6 +363,7 @@ function SubmitPage() {
             inputMode="email"
             autoComplete="email"
             value={values.contact}
+            disabled={submitting}
             aria-invalid={Boolean(errors.contact)}
             aria-describedby={errors.contact ? 'contact-error' : 'contact-hint'}
             onChange={(event) => update('contact', event.target.value)}
@@ -363,7 +374,7 @@ function SubmitPage() {
           label="What went wrong?"
           htmlFor="text"
           required
-          hint={`${values.text.trim().length} of ${MIN_TEXT} characters minimum. Include dates, amounts or reference numbers if you have them.`}
+          hint={`${values.text.trim().length} of ${MIN_TEXT} characters minimum. Describe the problem or location context.`}
           error={errors.text}
         >
           <textarea
@@ -371,17 +382,42 @@ function SubmitPage() {
             name="text"
             className="textarea"
             value={values.text}
+            disabled={submitting}
             aria-invalid={Boolean(errors.text)}
             aria-describedby={errors.text ? 'text-error' : 'text-hint'}
-            placeholder="Example: My salary was deducted last month without notice. Rs. 4,250 is missing from my payslip and my employee ID is EMP-20418."
+            placeholder="Example: Uncollected garbage pile blocking pedestrian path near main street market."
             onChange={(event) => update('text', event.target.value)}
+          />
+        </Field>
+
+        <Field
+          label="Waste Image"
+          htmlFor="image"
+          required
+          hint={`Upload a photo of the waste (JPEG, PNG, or WEBP, max ${formatBytes(MAX_IMAGE_BYTES)}).`}
+          error={errors.image}
+        >
+          <input
+            id="image"
+            name="image"
+            type="file"
+            className="file-input"
+            accept="image/jpeg,image/png,image/webp"
+            disabled={submitting}
+            aria-invalid={Boolean(errors.image)}
+            aria-describedby={errors.image ? 'image-error' : 'image-hint'}
+            onChange={(event) => {
+              const file = event.target.files?.[0] ?? null
+              setImageFile(file)
+              setErrors((curr) => ({ ...curr, image: undefined }))
+            }}
           />
         </Field>
 
         <Field
           label="Location"
           htmlFor="manualAddress"
-          hint="Optional, but helps route the case to the right area. Share your current location or type an address."
+          hint="Optional, but helps route the cleanup crew. Share your current location or type an address."
         >
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -389,7 +425,7 @@ function SubmitPage() {
                 type="button"
                 className="btn"
                 onClick={requestGpsLocation}
-                disabled={gpsStatus === 'requesting'}
+                disabled={gpsStatus === 'requesting' || submitting}
               >
                 {gpsStatus === 'requesting'
                   ? 'Getting your location…'
@@ -402,6 +438,7 @@ function SubmitPage() {
                   type="button"
                   className="btn btn-quiet"
                   onClick={clearGpsLocation}
+                  disabled={submitting}
                 >
                   Clear
                 </button>
@@ -435,6 +472,7 @@ function SubmitPage() {
                 className="input"
                 placeholder="e.g. Near 5th Cross Road, Indiranagar"
                 value={manualAddress}
+                disabled={submitting}
                 onChange={(event) => setManualAddress(event.target.value)}
               />
             ) : null}
@@ -447,6 +485,7 @@ function SubmitPage() {
             name="priority"
             className="select"
             value={values.priority}
+            disabled={submitting}
             onChange={(event) =>
               update('priority', event.target.value as Priority)
             }
@@ -459,48 +498,6 @@ function SubmitPage() {
           </select>
         </Field>
 
-        <Field
-          label="Attachments"
-          htmlFor="attachments"
-          hint={`Optional. Up to ${CONFIG.maxAttachments} files, ${formatBytes(CONFIG.maxAttachmentBytes)} each. PDF, TXT, PNG or JPG.`}
-        >
-          <input
-            id="attachments"
-            name="attachments"
-            type="file"
-            multiple
-            className="file-input"
-            accept={CONFIG.allowedAttachmentTypes.join(',')}
-            aria-describedby="attachments-hint"
-            onChange={(event) => onFiles(event.target.files)}
-          />
-        </Field>
-
-        {fileProblems.length > 0 ? (
-          <Callout tone="warn" title="Some files were not accepted">
-            <ul className="m-0 mt-1 list-disc space-y-0.5 pl-4">
-              {fileProblems.map((problem) => (
-                <li key={problem}>{problem}</li>
-              ))}
-            </ul>
-          </Callout>
-        ) : null}
-
-        {attachments.length > 0 ? (
-          <SectionCard title="Attached files" bodyClassName="card-pad pt-2">
-            <ul className="m-0 list-none space-y-1 p-0 text-xs muted">
-              {attachments.map((file) => (
-                <li key={file.name} className="flex justify-between gap-3">
-                  <span className="min-w-0 truncate">{file.name}</span>
-                  <span className="subtle shrink-0">
-                    {formatBytes(file.size)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </SectionCard>
-        ) : null}
-
         <div>
           <label className="check-row" htmlFor="consent">
             <input
@@ -508,6 +505,7 @@ function SubmitPage() {
               name="consent"
               type="checkbox"
               checked={values.consent}
+              disabled={submitting}
               aria-invalid={Boolean(errors.consent)}
               onChange={(event) => update('consent', event.target.checked)}
             />
@@ -528,8 +526,12 @@ function SubmitPage() {
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row">
-          <button type="submit" className="btn btn-primary btn-block sm:w-auto">
-            Submit grievance
+          <button
+            type="submit"
+            className="btn btn-primary btn-block sm:w-auto"
+            disabled={submitting}
+          >
+            {submitting ? 'Submitting grievance...' : 'Submit grievance'}
           </button>
           <Link to="/" className="btn btn-quiet btn-block sm:w-auto">
             Cancel

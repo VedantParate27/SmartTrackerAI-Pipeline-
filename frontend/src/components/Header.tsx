@@ -8,6 +8,8 @@ const LINKS = [
   { to: '/track', label: 'Track status' },
   { to: '/guide', label: 'Document guide' },
   { to: '/admin', label: 'Admin' },
+  { to: '/cleaner', label: 'Cleaner' },
+  { to: '/login', label: 'Sign in' },
 ] as const
 
 export default function Header() {
