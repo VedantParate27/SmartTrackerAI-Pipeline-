@@ -993,16 +993,45 @@ function WasteReviewPanel({ item, onRefresh }: { item: Complaint; onRefresh: () 
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
+  
   useEffect(() => {
+    let cancelled = false
+
     listCleaners()
       .then((data) => {
+        if (cancelled) return
+
         setCleaners(data)
-        if (data.length > 0) {
-          setCleanerId(String(data[0].id))
+        setCleanerId((current) => {
+          if (current && data.some((cleaner) => String(cleaner.id) === current)) {
+            return current
+          }
+
+          return data.length > 0 ? String(data[0].id) : ''
+        })
+
+        if (data.length === 0) {
+          setError('No cleaner accounts were found. Create a cleaner account before assigning this complaint.')
+        } else {
+          setError(null)
         }
       })
-      .catch((err) => console.error('Failed to list cleaners:', err))
+      .catch((err: unknown) => {
+        if (cancelled) return
+
+        console.error('Failed to list cleaners:', err)
+        setError(
+          err instanceof Error
+            ? `Could not load cleaners: ${err.message}`
+            : 'Could not load cleaners. Check your Admin login and API connection.',
+        )
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1149,7 +1178,14 @@ function WasteReviewPanel({ item, onRefresh }: { item: Complaint; onRefresh: () 
             <button
               type="submit"
               className="btn btn-primary mt-2"
-              disabled={loading}
+              
+              disabled={
+                loading ||
+                (decision === 'approve_cleanup' &&
+                  (!cleanerId ||
+                    !cleaners.some((cleaner) => String(cleaner.id) === cleanerId)))
+              }
+
             >
               {loading ? 'Submitting...' : decision === 'approve_cleanup' ? 'Approve & Assign Cleaner' : 'Reject Complaint'}
             </button>
