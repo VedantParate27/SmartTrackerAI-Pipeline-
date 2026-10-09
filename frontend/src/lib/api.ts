@@ -7,7 +7,9 @@ import type {
 } from './types'
 
 export const API_BASE_URL = (
-  import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+  import.meta.env.VITE_API_BASE_URL ??
+  import.meta.env.VITE_API_URL ??
+  'http://127.0.0.1:8000'
 ).replace(/\/$/, '')
 
 const AUTH_TOKEN_KEY = 'smarttracker_auth_token'
@@ -34,6 +36,11 @@ export function setAuthToken(token: string | null): void {
   } catch {
     // LocalStorage quota or private mode error
   }
+  try {
+    window.dispatchEvent(new Event('smarttracker:auth-change'))
+  } catch {
+    // Event dispatch fallback
+  }
 }
 
 export function clearAuthToken(): void {
@@ -52,6 +59,10 @@ export function getAuthUser(): AuthUser | null {
     const parts = token.split('.')
     if (parts.length !== 3) return null
     const payload = JSON.parse(atob(parts[1]))
+    if (payload.exp && Date.now() >= payload.exp * 1000) {
+      clearAuthToken()
+      return null
+    }
     return { id: Number(payload.sub), role: String(payload.role) }
   } catch {
     return null
@@ -70,7 +81,13 @@ export function getBackendImageUrl(
   ) {
     return relativePath
   }
-  const cleanPath = relativePath.replace(/^\/+/, '')
+
+  let cleanPath = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+
+  if (cleanPath.startsWith('backend/')) {
+    cleanPath = cleanPath.slice('backend/'.length)
+  }
+
   return `${API_BASE_URL}/${cleanPath}`
 }
 

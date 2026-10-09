@@ -1,11 +1,11 @@
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router'
-import { resetStore, setSession, useAppState } from '#/lib/store'
-import { SESSIONS } from '#/lib/taxonomy'
+import { resetStore } from '#/lib/store'
+import { getAuthUser } from '#/lib/api'
 
 export const Route = createFileRoute('/admin')({ component: AdminLayout })
 
 function AdminLayout() {
-  const { session } = useAppState()
+  const authUser = getAuthUser()
 
   return (
     <main id="main" className="wrap page">
@@ -17,30 +17,12 @@ function AdminLayout() {
           </h1>
         </div>
 
-        {/* NFR-05: the signed-in role decides what is visible and permitted. */}
-        <div className="flex w-full items-end gap-2 sm:w-auto">
-          <div className="min-w-0 flex-1 sm:flex-none">
-            <label className="kicker block" htmlFor="session">
-              Signed in as
-            </label>
-            <select
-              id="session"
-              className="select mt-1 text-sm"
-              value={session.role}
-              onChange={(event) => {
-                const next = SESSIONS.find(
-                  (item) => item.role === event.target.value,
-                )
-                if (next) setSession(next)
-              }}
-            >
-              {SESSIONS.map((item) => (
-                <option key={item.role} value={item.role}>
-                  {item.name} — {item.role}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          {authUser ? (
+            <span className="text-xs muted mono">
+              Admin #{authUser.id}
+            </span>
+          ) : null}
           <button
             type="button"
             className="btn btn-sm shrink-0"

@@ -11,6 +11,7 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from db import get_conn
@@ -41,6 +42,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://10.108.147.119:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://10.108.147.119:3001",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -51,7 +56,24 @@ app.add_middleware(
 # ---------- configuration ----------
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = PROJECT_ROOT / "backend" / "uploads" / "complaints"
+COMPLAINTS_UPLOAD_DIR = PROJECT_ROOT / "backend" / "uploads" / "complaints"
+CLEANUP_PROOFS_UPLOAD_DIR = PROJECT_ROOT / "backend" / "uploads" / "cleanup_proofs"
+
+COMPLAINTS_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+CLEANUP_PROOFS_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+UPLOAD_DIR = COMPLAINTS_UPLOAD_DIR
+
+app.mount(
+    "/uploads/complaints",
+    StaticFiles(directory=COMPLAINTS_UPLOAD_DIR),
+    name="uploads_complaints",
+)
+app.mount(
+    "/uploads/cleanup_proofs",
+    StaticFiles(directory=CLEANUP_PROOFS_UPLOAD_DIR),
+    name="uploads_cleanup_proofs",
+)
 
 ALLOWED_IMAGE_MIME_TYPES = {
     "image/jpeg": ".jpg",
