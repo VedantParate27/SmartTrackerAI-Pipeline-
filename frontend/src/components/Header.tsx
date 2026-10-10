@@ -9,6 +9,8 @@ const LINKS = [
   { to: '/track', label: 'Track' },
   { to: '/cleaner', label: 'Cleaner' },
   { to: '/admin', label: 'Admin' },
+  { to: '/cleaner', label: 'Cleaner' },
+  { to: '/login', label: 'Sign in' },
 ] as const
 
 /** Shield + check: a complaint carried through to a verified cleanup. */

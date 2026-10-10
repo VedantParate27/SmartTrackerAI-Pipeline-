@@ -1,0 +1,9 @@
+Account and Technical Support Policy
+
+Users experiencing login failures should first be guided through the standard password reset flow. If error codes E-401 through E-410 persist after a password reset, this indicates a backend authentication service issue and should be escalated to Tier 2 Technical Support with the exact error code and timestamp.
+
+Account lockouts after failed login attempts are automatically lifted after 30 minutes. Users may request an immediate unlock by verifying their identity via registered email or phone number.
+
+For error code E-501 (payment processing conflict during account actions), the technical support team should coordinate with the Billing department, as this error is often linked to a billing dispute or duplicate charge on the account.
+
+Data privacy: agents must never share full account details, including full payment card numbers, in written correspondence with customers.
