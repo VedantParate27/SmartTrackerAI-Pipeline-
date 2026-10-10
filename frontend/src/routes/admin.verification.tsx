@@ -25,9 +25,15 @@ function AdminVerificationPage() {
     setError(null)
     try {
       const data = await listCleanupTasks()
-      setTasks(data)
+      const awaitingVerification = data.filter(
+        (task) => task.status === 'verification',
+      )
+      setTasks(awaitingVerification)
     } catch (err: any) {
-      setError(err?.message || 'Failed to load verification tasks. Ensure you are signed in as an admin.')
+      setError(
+        err?.message ||
+          'Failed to load verification tasks. Ensure you are signed in as an admin.',
+      )
     } finally {
       setLoading(false)
     }
