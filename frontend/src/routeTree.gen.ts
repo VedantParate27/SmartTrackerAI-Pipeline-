@@ -12,12 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as CleanerRouteImport } from './routes/cleaner'
-import { Route as LoginRouteImport } from './routes/login'
 import { Route as SubmitRouteImport } from './routes/submit'
 import { Route as TrackRouteImport } from './routes/track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminEventsRouteImport } from './routes/admin.events'
-import { Route as AdminVerificationRouteImport } from './routes/admin.verification'
 import { Route as CleanerIndexRouteImport } from './routes/cleaner.index'
 import { Route as AdminCasesCaseIdRouteImport } from './routes/admin.cases.$caseId'
 import { Route as CleanerTasksTaskIdRouteImport } from './routes/cleaner.tasks.$taskId'
@@ -35,11 +33,6 @@ const AdminRoute = AdminRouteImport.update({
 const CleanerRoute = CleanerRouteImport.update({
   id: '/cleaner',
   path: '/cleaner',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SubmitRoute = SubmitRouteImport.update({
@@ -62,11 +55,6 @@ const AdminEventsRoute = AdminEventsRouteImport.update({
   path: '/events',
   getParentRoute: () => AdminRoute,
 } as any)
-const AdminVerificationRoute = AdminVerificationRouteImport.update({
-  id: '/verification',
-  path: '/verification',
-  getParentRoute: () => AdminRoute,
-} as any)
 const CleanerIndexRoute = CleanerIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -87,11 +75,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/cleaner': typeof CleanerRouteWithChildren
-  '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
   '/admin/events': typeof AdminEventsRoute
-  '/admin/verification': typeof AdminVerificationRoute
   '/admin/': typeof AdminIndexRoute
   '/cleaner/': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
@@ -99,11 +85,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
   '/admin/events': typeof AdminEventsRoute
-  '/admin/verification': typeof AdminVerificationRoute
   '/admin': typeof AdminIndexRoute
   '/cleaner': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
@@ -114,11 +98,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteWithChildren
   '/cleaner': typeof CleanerRouteWithChildren
-  '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
   '/admin/events': typeof AdminEventsRoute
-  '/admin/verification': typeof AdminVerificationRoute
   '/admin/': typeof AdminIndexRoute
   '/cleaner/': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
@@ -130,11 +112,9 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/cleaner'
-    | '/login'
     | '/submit'
     | '/track'
     | '/admin/events'
-    | '/admin/verification'
     | '/admin/'
     | '/cleaner/'
     | '/admin/cases/$caseId'
@@ -142,11 +122,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/login'
     | '/submit'
     | '/track'
     | '/admin/events'
-    | '/admin/verification'
     | '/admin'
     | '/cleaner'
     | '/admin/cases/$caseId'
@@ -156,11 +134,9 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/cleaner'
-    | '/login'
     | '/submit'
     | '/track'
     | '/admin/events'
-    | '/admin/verification'
     | '/admin/'
     | '/cleaner/'
     | '/admin/cases/$caseId'
@@ -171,7 +147,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRouteWithChildren
   CleanerRoute: typeof CleanerRouteWithChildren
-  LoginRoute: typeof LoginRoute
   SubmitRoute: typeof SubmitRoute
   TrackRoute: typeof TrackRoute
 }
@@ -197,13 +172,6 @@ declare module '@tanstack/react-router' {
       path: '/cleaner'
       fullPath: '/cleaner'
       preLoaderRoute: typeof CleanerRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/submit': {
@@ -234,13 +202,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminEventsRouteImport
       parentRoute: typeof AdminRoute
     }
-    '/admin/verification': {
-      id: '/admin/verification'
-      path: '/verification'
-      fullPath: '/admin/verification'
-      preLoaderRoute: typeof AdminVerificationRouteImport
-      parentRoute: typeof AdminRoute
-    }
     '/cleaner/': {
       id: '/cleaner/'
       path: '/'
@@ -267,14 +228,12 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteChildren {
   AdminEventsRoute: typeof AdminEventsRoute
-  AdminVerificationRoute: typeof AdminVerificationRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCasesCaseIdRoute: typeof AdminCasesCaseIdRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminEventsRoute: AdminEventsRoute,
-  AdminVerificationRoute: AdminVerificationRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminCasesCaseIdRoute: AdminCasesCaseIdRoute,
 }
@@ -298,7 +257,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRouteWithChildren,
   CleanerRoute: CleanerRouteWithChildren,
-  LoginRoute: LoginRoute,
   SubmitRoute: SubmitRoute,
   TrackRoute: TrackRoute,
 }
