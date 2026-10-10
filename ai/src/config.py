@@ -38,3 +38,7 @@ WASTE_CONFIDENCE_THRESHOLD = 0.6  # same philosophy as CONFIDENCE_THRESHOLD
 # --- Waste escalation decision ---
 ESCALATE_SEVERITIES = ["dump_scale"]  # severities that always escalate regardless of history
 RECURRING_REPORT_THRESHOLD = 3  # 3+ prior reports at same location = treat as recurring
+
+# --- DWM (data mining) classifier ---
+ENVIRONMENTS = ["bin", "open_ground", "landfill"]
+DWM_CONFIDENCE_THRESHOLD = 0.7  # placeholder: recalibrate once trained models exist

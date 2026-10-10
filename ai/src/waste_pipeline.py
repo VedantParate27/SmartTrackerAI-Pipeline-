@@ -3,7 +3,7 @@ Orchestrates the waste-image flow: classify the image, decide whether to
 escalate to authorities or provide disposal guidance, and route accordingly.
 This is the waste-domain equivalent of pipeline.py's process_complaint().
 """
-from waste_classifier import classify_waste_image
+from hybrid_classifier import classify_hybrid as classify_waste_image
 from config import ESCALATE_SEVERITIES, RECURRING_REPORT_THRESHOLD, WASTE_CONFIDENCE_THRESHOLD
 from waste_rag import retrieve_guidance_chunks, generate_disposal_guidance
 
@@ -35,6 +35,9 @@ def process_waste_image(
         "review_reasons": [],
         "disposal_guidance": None,
         "errors": [],
+        "source": None, 
+        "fallback_reason": None, 
+        "environment": None,
     }
 
     # --- Step 1: Classify the image ---
@@ -51,6 +54,9 @@ def process_waste_image(
             "severity_confidence": classification["severity_confidence"],
             "reasoning": classification["reasoning"],
             "follow_up_question": classification["follow_up_question"],
+            "source": classification.get("source"), 
+            "fallback_reason": classification.get("fallback_reason"), 
+            "environment": classification.get("environment"),
         })
     except Exception as e:
         result["errors"].append(f"classification_failed: {e}")

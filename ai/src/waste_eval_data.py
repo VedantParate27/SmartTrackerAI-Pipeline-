@@ -25,6 +25,7 @@ WASTE_TEST_CASES = [
         "expected_waste_type": "mixed",
         "expected_severity": "moderate",
         "expected_escalate": False,
+        "known_ambiguous": True,
     },
     {
         "image": "dog.jpeg",
