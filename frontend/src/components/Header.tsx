@@ -9,7 +9,6 @@ const LINKS = [
   { to: '/track', label: 'Track' },
   { to: '/cleaner', label: 'Cleaner' },
   { to: '/admin', label: 'Admin' },
-  { to: '/cleaner', label: 'Cleaner' },
   { to: '/login', label: 'Sign in' },
 ] as const
 
