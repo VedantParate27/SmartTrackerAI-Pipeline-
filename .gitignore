@@ -8,3 +8,4 @@ chroma_db/
 # Uploaded proof images
 backend/uploads/*.jpg
 ai/models/*.pt
+ai/data/dwm_images/
