@@ -9,3 +9,5 @@ chroma_db/
 # Runtime-uploaded test/user images
 backend/uploads/
 smarttracker-project-review.zip
+
+ai/models/best.pt
