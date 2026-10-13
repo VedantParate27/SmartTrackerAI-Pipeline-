@@ -5,7 +5,7 @@ escalate to authorities or provide disposal guidance, and route accordingly.
 This is the waste-domain equivalent of pipeline.py's process_complaint().
 """
 
-from waste_classifier import classify_waste_image
+from hybrid_classifier import classify_hybrid as classify_waste_image
 from config import (
     ESCALATE_SEVERITIES,
     RECURRING_REPORT_THRESHOLD,
@@ -43,6 +43,8 @@ def process_waste_image(
         "severity": None,
         "severity_confidence": None,
         "reasoning": None,
+        "source": None,
+        "fallback_reason": None,
         "location": location,
         "prior_reports_at_location": prior_reports_at_location,
         "recurring_flag": False,
@@ -75,6 +77,8 @@ def process_waste_image(
                 ],
                 "reasoning": classification["reasoning"],
                 "follow_up_question": classification["follow_up_question"],
+                "source": classification.get("source"),
+                "fallback_reason": classification.get("fallback_reason"),
             }
         )
 

@@ -46,3 +46,7 @@ WASTE_GUIDELINES_FOLDER = os.path.join(PROJECT_ROOT, "ai", "data", "waste_guidel
 
 # --- Cleanup verification ---
 CLEANUP_REVIEW_THRESHOLD = 0.7  # below this confidence requires admin review
+
+# --- DWM hybrid classifier ---
+ENVIRONMENTS = ["bin", "open_ground", "landfill"]
+DWM_CONFIDENCE_THRESHOLD = 0.7
