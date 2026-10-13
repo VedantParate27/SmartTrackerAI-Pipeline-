@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Callout, EmptyState, StatusPill } from '#/components/ui'
 import { ageInHours, formatAge, percent } from '#/lib/format'
-import { getAdminQueue } from '#/lib/api'
+import { getAdminComplaints } from '#/lib/api'
 import { isVisible, useAppState } from '#/lib/store'
 import { CONFIG, DEPARTMENTS, PRIORITIES, STATUSES } from '#/lib/taxonomy'
 import type { Complaint } from '#/lib/types'
@@ -33,7 +33,7 @@ function QueuePage() {
   const [backendCases, setBackendCases] = useState<Complaint[]>([])
 
   useEffect(() => {
-    getAdminQueue()
+    getAdminComplaints()
       .then((items) => {
         const mapped: Complaint[] = items.map((item) => ({
           id: String(item.id),

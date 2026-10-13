@@ -203,9 +203,10 @@ def create_cleaner(
 ):
     require_role(current_user, "admin")
 
+    normalized_email = str(payload.email).strip().lower()
     existing = conn.execute(
-        "SELECT id FROM users WHERE email = ?",
-        (payload.email,),
+        "SELECT id FROM users WHERE LOWER(TRIM(email)) = ?",
+        (normalized_email,),
     ).fetchone()
 
     if existing:
@@ -227,8 +228,8 @@ def create_cleaner(
         VALUES (?, ?, ?, 'cleaner')
         """,
         (
-            payload.name,
-            payload.email,
+            payload.name.strip(),
+            normalized_email,
             password_hash,
         ),
     )
@@ -731,6 +732,55 @@ def admin_queue(
     ORDER BY c.created_at
     """
 ).fetchall()
+
+    return [dict(r) for r in rows]
+
+
+
+@app.get("/admin/complaints")
+def admin_complaints(
+    current_user=Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    require_role(current_user, "admin")
+
+    rows = conn.execute(
+        """
+        SELECT c.id,
+               c.user_id,
+               c.complaint_text,
+               c.category,
+               c.department,
+               c.confidence_score,
+               c.extracted_entities,
+               c.latitude,
+               c.longitude,
+               c.location_type,
+               c.manual_address,
+               c.image_path,
+               c.image_mime_type,
+               c.waste_type,
+               c.waste_type_confidence,
+               c.severity,
+               c.severity_confidence,
+               c.ai_reasoning,
+               c.follow_up_question,
+               c.recurring_flag,
+               c.prior_reports_at_location,
+               c.escalate_to_authority,
+               c.needs_human_review,
+               c.review_reasons,
+               c.disposal_guidance,
+               c.status,
+               c.created_at,
+               c.updated_at,
+               r.ai_draft_response
+        FROM complaints c
+        LEFT JOIN responses r
+            ON r.complaint_id = c.id
+        ORDER BY c.created_at DESC
+        """
+    ).fetchall()
 
     return [dict(r) for r in rows]
 

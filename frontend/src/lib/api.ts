@@ -576,6 +576,12 @@ export async function getAdminQueue(): Promise<AdminQueueItem[]> {
   return request<AdminQueueItem[]>('/admin/queue')
 }
 
+
+export async function getAdminComplaints(): Promise<AdminQueueItem[]> {
+  return request<AdminQueueItem[]>('/admin/complaints')
+}
+
+
 export async function approveComplaint(
   complaintId: string | number,
   payload: ApprovalPayload,
