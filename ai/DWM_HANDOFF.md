@@ -45,6 +45,15 @@ header exactly for your full label file.
    Get `best_yolov8s_final.pt` from the Hugging Face repo
    `ShihoAI/yolov8s-garbage-detection`, rename it to `best.pt`, and place it at `ai/models/best.pt`.
    Classes: biological, cardboard, metal, paper, plastic, other. Reported mAP50 is only about 39%.
+      Expected file after renaming to best.pt:
+   - size: 22,584,035 bytes
+   - SHA256: ffe470066dba636741f3f62af94689673e45ef3d90917b981f4ea3ff7fe8bb8e
+   Check yours on Windows with: certutil -hashfile ai\models\best.pt SHA256
+   If the hash does NOT match, stop and ask Member 3 before training. The 41
+   features are computed from this detector's output, so models trained on
+   features from different weights will not work with our pipeline.
+   Note: this hash is of Member 3's renamed copy. It has not yet been compared with
+   the hash published on Hugging Face.
 5. The waste guideline RAG needs the ChromaDB collection `waste_guidelines` ingested
    (6 guideline files in `data/waste_guidelines`). The Gemini fallback path uses this.
 
