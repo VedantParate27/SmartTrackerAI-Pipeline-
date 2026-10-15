@@ -92,7 +92,6 @@ def classify_waste_image(image_bytes: bytes, mime_type: str = "image/jpeg", addi
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
                         response_schema=WasteClassification,
-                        temperature=0,
                     ),
                 )
                 return response.parsed.model_dump()

@@ -198,7 +198,7 @@ function CleanerPortalPage() {
                     </button>
                   ) : null}
 
-                  {(task.status === 'in_progress' || task.status === 'assigned' || task.status === 'rework_required') ? (
+                  {(task.status === 'in_progress') ? (
                     <div className="flex-1 max-w-lg bg-(--surface-2) p-3 rounded-lg grid gap-2">
                       <Field label="Upload Completion Proof Image" htmlFor={`proof-${task.id}`}>
                         <input

@@ -6,10 +6,11 @@ import type {
   Priority,
 } from './types'
 
+const envApiUrl = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL
 export const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ??
-  import.meta.env.VITE_API_URL ??
-  'http://127.0.0.1:8000'
+  envApiUrl && !envApiUrl.includes('PASTE_NEW_BACKEND_URL_HERE')
+    ? envApiUrl
+    : 'http://10.108.147.119:8000'
 ).replace(/\/$/, '')
 
 const AUTH_TOKEN_KEY = 'smarttracker_auth_token'
@@ -578,7 +579,7 @@ export async function getAdminQueue(): Promise<AdminQueueItem[]> {
 
 
 export async function getAdminComplaints(): Promise<AdminQueueItem[]> {
-  return request<AdminQueueItem[]>('/admin/complaints')
+  return request<AdminQueueItem[]>('/admin/queue')
 }
 
 

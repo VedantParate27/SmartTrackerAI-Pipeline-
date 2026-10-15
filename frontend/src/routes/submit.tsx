@@ -138,6 +138,10 @@ function SubmitPage() {
     return null
   }
 
+  // useEffect(() => {
+  //   requestGpsLocation()
+  // }, [])
+
   useEffect(() => {
     if (failedAttempts > 0) errorSummary.current?.focus()
   }, [failedAttempts])

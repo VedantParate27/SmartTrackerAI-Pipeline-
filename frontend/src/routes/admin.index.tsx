@@ -3,6 +3,7 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { Callout, EmptyState, StatusPill } from '#/components/ui'
 import { ageInHours, formatAge, percent } from '#/lib/format'
 import { getAdminComplaints } from '#/lib/api'
+
 import { isVisible, useAppState } from '#/lib/store'
 import { CONFIG, DEPARTMENTS, PRIORITIES, STATUSES } from '#/lib/taxonomy'
 import type { Complaint } from '#/lib/types'
@@ -89,8 +90,6 @@ function QueuePage() {
   }, [])
 
   const [search, setSearch] = useState('')
-  const [status, setStatus] = useState('any')
-  const [department, setDepartment] = useState('any')
   const [priority, setPriority] = useState('any')
   const [age, setAge] = useState<(typeof AGE_OPTIONS)[number]['value']>('any')
   const [confidence, setConfidence] =
@@ -144,14 +143,7 @@ function QueuePage() {
           const haystack = `${item.id} ${item.requesterName} ${item.text} ${item.classification?.intent ?? ''}`
           if (!haystack.toLowerCase().includes(needle)) return false
         }
-        if (status !== 'any' && item.status !== status) return false
         if (priority !== 'any' && item.priority !== priority) return false
-
-        if (department !== 'any') {
-          const owner =
-            item.assignedDepartment ?? item.classification?.department
-          if (owner !== department) return false
-        }
 
         if (age !== 'any' && ageInHours(item.submittedAt, now) < Number(age)) {
           return false
@@ -170,7 +162,7 @@ function QueuePage() {
         (a, b) =>
           new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
       )
-  }, [permitted, search, status, department, priority, age, confidence, now])
+  }, [permitted, search, priority, age, confidence, now])
 
   return (
     <div className="grid gap-4">
@@ -213,42 +205,7 @@ function QueuePage() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
-
-          <label className="sr-only" htmlFor="f-status">
-            Status
-          </label>
-          <select
-            id="f-status"
-            className="select"
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-          >
-            <option value="any">Any status</option>
-            {STATUSES.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-
-          <label className="sr-only" htmlFor="f-dept">
-            Department
-          </label>
-          <select
-            id="f-dept"
-            className="select"
-            value={department}
-            onChange={(event) => setDepartment(event.target.value)}
-          >
-            <option value="any">Any department</option>
-            {DEPARTMENTS.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-
-          <label className="sr-only" htmlFor="f-priority">
+<label className="sr-only" htmlFor="f-priority">
             Priority
           </label>
           <select

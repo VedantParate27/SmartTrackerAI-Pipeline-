@@ -126,8 +126,9 @@ def require_role(current_user: sqlite3.Row, role: str) -> sqlite3.Row:
 # Core operations, called from the endpoints in main.py
 # ---------------------------------------------------------------------------
 def register_user(conn: sqlite3.Connection, body: RegisterRequest) -> RegisterResponse:
+    normalized_email = str(body.email).strip().lower()
     existing = conn.execute(
-        "SELECT id FROM users WHERE email = ?", (body.email,)
+        "SELECT id FROM users WHERE LOWER(TRIM(email)) = ?", (normalized_email,)
     ).fetchone()
     if existing:
         raise HTTPException(
@@ -137,9 +138,9 @@ def register_user(conn: sqlite3.Connection, body: RegisterRequest) -> RegisterRe
 
     hashed = hash_password(body.password)
     cur = conn.execute(
-    "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'citizen')",
-    (body.name, body.email, hashed),
-)
+        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'citizen')",
+        (body.name.strip(), normalized_email, hashed),
+    )
     conn.commit()
     user_id = cur.lastrowid
     row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -147,13 +148,17 @@ def register_user(conn: sqlite3.Connection, body: RegisterRequest) -> RegisterRe
 
 
 def login_user(conn: sqlite3.Connection, body: LoginRequest) -> TokenResponse:
+    normalized_email = str(body.email).strip().lower()
     user = conn.execute(
-        "SELECT * FROM users WHERE email = ?", (body.email,)
+        "SELECT * FROM users WHERE LOWER(TRIM(email)) = ?", (normalized_email,)
     ).fetchone()
 
     # Same failure path whether the email doesn't exist or the password is
     # wrong, to avoid leaking which emails are registered.
-    password_ok = user is not None and verify_password(body.password, user["password_hash"])
+    password_ok = user is not None and verify_password(
+        body.password,
+        user["password_hash"],
+    )
     if not password_ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

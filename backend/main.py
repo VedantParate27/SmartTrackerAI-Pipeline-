@@ -5,7 +5,7 @@ Run: uvicorn main:app --reload
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 import json
 import uuid
 
@@ -35,7 +35,14 @@ from waste_pipeline import process_waste_image
 from cleanup_verifier import verify_cleanup
 
 
+
 app = FastAPI(title="SmartTracker AI")
+
+
+@app.get("/")
+def root_status():
+    return {"status": "ok", "service": "SmartTracker AI API"}
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -311,6 +318,8 @@ def _count_prior_reports(
         return int(row["count"]) if row else 0
 
     if location_type == "manual":
+        if not manual_address or not manual_address.strip():
+            return 0
         row = conn.execute(
             """
             SELECT COUNT(*) AS count
@@ -350,22 +359,54 @@ def _save_complaint_image(
 @app.post("/complaints", response_model=ComplaintOut, status_code=201)
 def submit_complaint(
     complaint_text: str = Form(...),
-    latitude: Optional[float] = Form(None),
-    longitude: Optional[float] = Form(None),
+    latitude: Optional[Union[float, str]] = Form(None),
+    longitude: Optional[Union[float, str]] = Form(None),
     location_type: Optional[str] = Form(None),
     manual_address: Optional[str] = Form(None),
     image: UploadFile = File(...),
     current_user=Depends(get_current_user),
     conn=Depends(get_conn),
 ):
-    # Validate the form fields using the same Pydantic rules as before.
-    payload = ComplaintCreate(
-        complaint_text=complaint_text,
-        latitude=latitude,
-        longitude=longitude,
-        location_type=location_type,
-        manual_address=manual_address,
+    # Normalize empty form strings to None
+    norm_location_type = (
+        location_type.strip()
+        if location_type and location_type.strip()
+        else None
     )
+    norm_manual_address = (
+        manual_address.strip()
+        if manual_address and manual_address.strip()
+        else None
+    )
+
+    norm_latitude: Optional[float] = None
+    if latitude is not None and str(latitude).strip():
+        try:
+            norm_latitude = float(latitude)
+        except (ValueError, TypeError):
+            raise HTTPException(400, "latitude must be a valid number")
+
+    norm_longitude: Optional[float] = None
+    if longitude is not None and str(longitude).strip():
+        try:
+            norm_longitude = float(longitude)
+        except (ValueError, TypeError):
+            raise HTTPException(400, "longitude must be a valid number")
+
+    # Validate the form fields using the same Pydantic rules as before.
+    try:
+        payload = ComplaintCreate(
+            complaint_text=complaint_text,
+            latitude=norm_latitude,
+            longitude=norm_longitude,
+            location_type=norm_location_type,
+            manual_address=norm_manual_address,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            400,
+            f"Invalid complaint submission: {exc}",
+        )
 
     if not payload.complaint_text.strip():
         raise HTTPException(400, "complaint_text cannot be empty")
@@ -417,7 +458,11 @@ def submit_complaint(
 
     elif payload.location_type == "manual":
         location = {
-            "address": payload.manual_address.strip(),
+            "address": (
+                payload.manual_address.strip()
+                if payload.manual_address
+                else ""
+            ),
         }
 
     # Insert the complaint first so the report exists even if the AI
@@ -551,7 +596,7 @@ def submit_complaint(
             int(waste_result.get(
                 "prior_reports_at_location",
                 prior_reports,
-            )),
+            ) or 0),
             int(escalate_to_authority),
             int(needs_human_review),
             review_reasons_json,
