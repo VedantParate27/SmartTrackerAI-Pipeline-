@@ -28,7 +28,14 @@ const MIN_TEXT = 30
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024 // 10 MB
 
-type GpsStatus = 'idle' | 'requesting' | 'granted' | 'denied' | 'unavailable'
+type GpsStatus =
+  | 'idle'
+  | 'requesting'
+  | 'granted'
+  | 'denied'
+  | 'unavailable'
+  | 'timeout'
+  | 'insecure'
 
 function validate(values: FormValues, imageFile: File | null) {
   const errors: Partial<Record<keyof FormValues | 'image', string>> = {}
@@ -87,36 +94,48 @@ function SubmitPage() {
     longitude: number
   } | null>(null)
   const [manualAddress, setManualAddress] = useState('')
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null)
 
   function requestGpsLocation() {
-    if (!('geolocation' in navigator)) {
-      setGpsStatus('unavailable')
-      return
-    }
-
-    setGpsStatus('requesting')
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setGpsCoords({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        })
-        setGpsStatus('granted')
-      },
-      (error) => {
-        setGpsCoords(null)
-        setGpsStatus(
-          error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable',
-        )
-      },
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
-    )
+  if (!window.isSecureContext) {
+    setGpsStatus('insecure')
+    return
   }
+  if (!('geolocation' in navigator)) {
+    setGpsStatus('unavailable')
+    return
+  }
+
+  setGpsStatus('requesting')
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      setGpsCoords({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      })
+      setGpsAccuracy(Math.round(position.coords.accuracy))
+      setGpsStatus('granted')
+    },
+    (error) => {
+      setGpsCoords(null)
+      setGpsAccuracy(null)
+      setGpsStatus(
+        error.code === error.PERMISSION_DENIED
+          ? 'denied'
+          : error.code === error.TIMEOUT
+            ? 'timeout'
+            : 'unavailable',
+      )
+    },
+    { enableHighAccuracy: true, timeout: 15_000, maximumAge: 30_000 },
+  )
+}
 
   function clearGpsLocation() {
-    setGpsCoords(null)
-    setGpsStatus('idle')
-  }
+  setGpsCoords(null)
+  setGpsAccuracy(null)
+  setGpsStatus('idle')
+}
 
   function currentLocation(): ComplaintLocation | null {
     if (gpsStatus === 'granted' && gpsCoords) {
@@ -389,7 +408,7 @@ function SubmitPage() {
             disabled={submitting}
             aria-invalid={Boolean(errors.text)}
             aria-describedby={errors.text ? 'text-error' : 'text-hint'}
-            placeholder="Example: Uncollected garbage pile blocking pedestrian path near main street market."
+            placeholder="e.g. Near Dadar station, Mumbai"
             onChange={(event) => update('text', event.target.value)}
           />
         </Field>
@@ -452,7 +471,8 @@ function SubmitPage() {
             {gpsStatus === 'granted' && gpsCoords ? (
               <p className="hint">
                 Using your current location ({gpsCoords.latitude.toFixed(5)},{' '}
-                {gpsCoords.longitude.toFixed(5)}).
+                {gpsCoords.longitude.toFixed(5)})
+                {gpsAccuracy != null ? `, accurate to about ${gpsAccuracy} m` : ''}.
               </p>
             ) : null}
 
@@ -466,6 +486,20 @@ function SubmitPage() {
               <Callout tone="warn" title="Location unavailable">
                 Your browser or device could not provide a location. Type an
                 address below instead.
+              </Callout>
+            ) : null}
+
+            {gpsStatus === 'insecure' ? (
+              <Callout tone="warn" title="Location needs a secure (HTTPS) connection">
+                This page was opened over plain HTTP, so the browser blocks GPS. Open
+                the secure link, or type an address below.
+              </Callout>
+            ) : null}
+
+            {gpsStatus === 'timeout' ? (
+              <Callout tone="warn" title="Location timed out">
+                Turn on device location or move to an open area and try again, or type
+                an address below.
               </Callout>
             ) : null}
 
