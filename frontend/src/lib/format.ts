@@ -53,3 +53,13 @@ export function formatAge(iso: string, now: string) {
   if (hours < 24) return `${hours} h ${mins % 60} min`
   return `${Math.floor(hours / 24)} d ${hours % 24} h`
 }
+
+export function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function percent(value: number) {
+  return `${Math.round(value * 100)}%`
+}
