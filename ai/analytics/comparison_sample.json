@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "records": 201,
+    "sources": [
+      "synthetic"
+    ]
+  },
+  "locations": [
+    "Dadar",
+    "Wadala"
+  ],
+  "waste_types": [
+    "dry",
+    "e_waste",
+    "hazardous",
+    "mixed",
+    "sanitary",
+    "wet"
+  ],
+  "severities": [
+    "domestic",
+    "dump_scale",
+    "moderate"
+  ],
+  "weeks": [
+    "2026-W40",
+    "2026-W41",
+    "2026-W42",
+    "2026-W43",
+    "2026-W44"
+  ],
+  "totals": {
+    "Dadar": 99,
+    "Wadala": 102
+  },
+  "by_waste_type": {
+    "Dadar": {
+      "dry": 18,
+      "e_waste": 21,
+      "hazardous": 14,
+      "mixed": 17,
+      "sanitary": 16,
+      "wet": 13
+    },
+    "Wadala": {
+      "dry": 15,
+      "e_waste": 19,
+      "hazardous": 13,
+      "mixed": 17,
+      "sanitary": 20,
+      "wet": 18
+    }
+  },
+  "by_severity": {
+    "Dadar": {
+      "domestic": 57,
+      "dump_scale": 9,
+      "moderate": 33
+    },
+    "Wadala": {
+      "domestic": 53,
+      "dump_scale": 9,
+      "moderate": 40
+    }
+  },
+  "weekly": {
+    "Dadar": {
+      "2026-W40": 9,
+      "2026-W41": 24,
+      "2026-W42": 21,
+      "2026-W43": 27,
+      "2026-W44": 18
+    },
+    "Wadala": {
+      "2026-W40": 12,
+      "2026-W41": 21,
+      "2026-W42": 31,
+      "2026-W43": 22,
+      "2026-W44": 16
+    }
+  },
+  "median_cleaning_minutes": {
+    "Dadar": 20.9,
+    "Wadala": 26.6
+  },
+  "median_response_minutes": {
+    "Dadar": 53.0,
+    "Wadala": 47.0
+  }
+}
