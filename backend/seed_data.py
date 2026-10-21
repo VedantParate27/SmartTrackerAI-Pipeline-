@@ -128,32 +128,70 @@ def _weighted(rng, pairs):
     return rng.choices(options, weights=weights, k=1)[0]
 
 
+def _has_event(db, case_id: str, activity: str) -> bool:
+    """True when the case already carries this activity (idempotency guard).
+
+    Keeps a repeated seeding run from adding a second start event to a case
+    that already has one.
+    """
+    return (
+        db.query(EventLog)
+        .filter(EventLog.case_id == case_id, EventLog.activity == activity)
+        .count()
+    ) > 0
+
+
 def _seed_events(db, complaint, actor_id, rng, cleaner_id=None, with_task=False,
-                 with_proofs=False, verified=False):
-    """Write a complete, internally consistent event chain for one complaint."""
+                 with_proofs=False, verified=False, assigned_at=None,
+                 started_at=None, proof_times=None, verify_at=None):
+    """Write a complete, internally consistent event chain for one complaint.
+
+    Every event carries the SYNTHETIC timestamp of the step it describes, so
+    the seeded event log is chronologically valid and agrees with the rows it
+    references (task.assigned_at, task.started_at, proof.uploaded_at,
+    task.completed_at). The order is always:
+      complaint_created -> dispatch_decided -> cleaner_assigned
+        -> task_started -> proof_submitted -> proof_verified/proof_rejected
+        -> complaint_resolved
+    """
     log_event(db, case_id=complaint.tracking_id, activity="complaint_created",
               actor_id=actor_id, actor_role="system", new_value="pending",
-              meta={"seeded": True, "priority": complaint.priority})
+              meta={"seeded": True, "priority": complaint.priority},
+              timestamp=complaint.created_at)
     if with_task and cleaner_id is not None:
         log_event(db, case_id=complaint.tracking_id, activity="dispatch_decided",
-                  actor_id=actor_id, actor_role="system", new_value="dispatch")
+                  actor_id=actor_id, actor_role="system", new_value="dispatch",
+                  timestamp=assigned_at)
         log_event(db, case_id=complaint.tracking_id, activity="cleaner_assigned",
-                  actor_id=actor_id, actor_role="system", new_value=str(cleaner_id))
+                  actor_id=actor_id, actor_role="system", new_value=str(cleaner_id),
+                  timestamp=assigned_at)
+    # The cleaner genuinely began the work -> a start timestamp on the task and
+    # exactly ONE task_started event (never two for the same case).
+    if started_at is not None and not _has_event(
+        db, complaint.tracking_id, "task_started"
+    ):
+        log_event(db, case_id=complaint.tracking_id, activity="task_started",
+                  actor_id=cleaner_id, actor_role="cleaner",
+                  old_value="assigned", new_value="in_progress",
+                  meta={"seeded": True}, timestamp=started_at)
     if with_proofs and verified:
         log_event(db, case_id=complaint.tracking_id, activity="proof_submitted",
-                  actor_role="cleaner", new_value="proof_submitted", meta={"seeded": True})
+                  actor_role="cleaner", new_value="proof_submitted",
+                  meta={"seeded": True}, timestamp=proof_times[0])
         log_event(db, case_id=complaint.tracking_id, activity="proof_verified",
                   actor_id=actor_id, actor_role="system", old_value="pending_verification",
-                  new_value="verified")
+                  new_value="verified", timestamp=verify_at)
         log_event(db, case_id=complaint.tracking_id, activity="complaint_resolved",
                   actor_id=actor_id, actor_role="system", old_value="in_progress",
-                  new_value="resolved")
+                  new_value="resolved", timestamp=verify_at)
     elif with_proofs:  # rejected proof loop, still open
         log_event(db, case_id=complaint.tracking_id, activity="proof_submitted",
-                  actor_role="cleaner", new_value="proof_submitted", meta={"seeded": True})
+                  actor_role="cleaner", new_value="proof_submitted",
+                  meta={"seeded": True}, timestamp=proof_times[0])
         log_event(db, case_id=complaint.tracking_id, activity="proof_rejected",
                   actor_id=actor_id, actor_role="system", old_value="pending_verification",
-                  new_value="rejected", meta={"rejection_reason": "seeded rejection"})
+                  new_value="rejected", meta={"rejection_reason": "seeded rejection"},
+                  timestamp=proof_times[-1])
 
 
 def seed_database(number_of_complaints: int = 500, number_of_cleaners: int = 5,
@@ -283,12 +321,19 @@ def seed_database(number_of_complaints: int = 500, number_of_cleaners: int = 5,
                 complaint.status = "resolved"
                 complaint.recommended_action = f"Dispose of {waste_type} waste at the nearest designated facility in {ward}."
                 complaint.resolved_at = created_at + timedelta(hours=rng.randint(2, 48))
-            elif with_task:
+
+            assigned_at = None
+            started_at = None
+            proof_times = []
+            verify_at = None
+
+            if with_task:
+                assigned_at = created_at + timedelta(hours=rng.randint(1, 12))
                 task = CleanupTask(
                     complaint_id=complaint.id,
                     assigned_cleaner_id=cleaner.id,
                     status="assigned",
-                    assigned_at=created_at + timedelta(hours=rng.randint(1, 12)),
+                    assigned_at=assigned_at,
                     notes="Seeded task",
                 )
                 db.add(task)
@@ -296,8 +341,22 @@ def seed_database(number_of_complaints: int = 500, number_of_cleaners: int = 5,
                 complaint.status = "in_progress"
                 summary["tasks"] += 1
 
+                # A task has a start ONLY when the seeded world says the
+                # cleaner actually began work (i.e. a proof was eventually
+                # uploaded). A merely assigned task keeps started_at NULL and
+                # gets no task_started event — nothing is inferred.
                 if with_proofs:
-                    n_attempts = 2 if outcome == "dispatch_reject_loop" else 1
+                    started_at = assigned_at + timedelta(minutes=rng.randint(10, 240))
+                    first_proof_at = started_at + timedelta(minutes=rng.randint(15, 720))
+                    proof_times.append(first_proof_at)
+                    if outcome == "dispatch_reject_loop":
+                        proof_times.append(
+                            first_proof_at + timedelta(minutes=rng.randint(60, 1440))
+                        )
+                    task.started_at = started_at
+
+                if with_proofs:
+                    n_attempts = len(proof_times)
                     created_proofs = []
                     for attempt in range(n_attempts):
                         proof = CleanupProof(
@@ -305,13 +364,15 @@ def seed_database(number_of_complaints: int = 500, number_of_cleaners: int = 5,
                             image_url=f"/uploads/seed_proof_{uuid.uuid4().hex[:12]}.jpg",
                             uploaded_by=cleaner.id,
                             verification_status="pending_verification",
-                            uploaded_at=task.assigned_at + timedelta(hours=attempt * rng.randint(4, 24)),
+                            uploaded_at=proof_times[attempt],
                         )
                         db.add(proof)
                         created_proofs.append(proof)
                         summary["proofs"] += 1
                     if outcome == "dispatch_verified":
-                        verify_at = task.assigned_at + timedelta(hours=rng.randint(6, 72))
+                        # completed_at stays the ADMIN-VERIFICATION timestamp.
+                        # No physical finish time is invented.
+                        verify_at = proof_times[-1] + timedelta(minutes=rng.randint(60, 2880))
                         proof_last = created_proofs[-1]
                         proof_last.verification_status = "verified"
                         proof_last.verified_by = None  # system-verified seed; no fake admin user
@@ -321,12 +382,14 @@ def seed_database(number_of_complaints: int = 500, number_of_cleaners: int = 5,
                         complaint.status = "resolved"
                         complaint.resolved_at = verify_at
                     else:
-                        task.status = "rejected"  # resubmission loop still open
+                        task.status = "rejected"
 
             _seed_events(db, complaint, seed_citizen.id, rng,
                          cleaner_id=cleaner.id if cleaner else None,
                          with_task=with_task, with_proofs=with_proofs,
-                         verified=(outcome == "dispatch_verified"))
+                         verified=(outcome == "dispatch_verified"),
+                         assigned_at=assigned_at, started_at=started_at,
+                         proof_times=proof_times, verify_at=verify_at)
             summary["complaints"] += 1
 
         db.commit()

@@ -5,7 +5,7 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # ---------------------------------------------------------------------------
@@ -24,7 +24,23 @@ engine_options = {}
 if DATABASE_URL.startswith("sqlite"):
     engine_options["connect_args"] = {"check_same_thread": False}
 
-engine = create_engine(DATABASE_URL, **engine_options)
+
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+    dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+
+def _create_database_engine(database_url, **options):
+    database_engine = create_engine(database_url, **options)
+    if database_engine.dialect.name == "sqlite":
+        event.listen(
+            database_engine,
+            "connect",
+            _enable_sqlite_foreign_keys,
+        )
+    return database_engine
+
+
+engine = _create_database_engine(DATABASE_URL, **engine_options)
 
 # ---------------------------------------------------------------------------
 # 3. SESSION FACTORY
@@ -64,6 +80,45 @@ def _column_ddl(column) -> str:
     return f"{column.name} {col_type}"
 
 
+def _ensure_location_schema(target_engine):
+    """Add location-specific legacy columns, indexes, and seed locations."""
+    inspector = inspect(target_engine)
+    complaint_columns = {
+        column["name"] for column in inspector.get_columns("complaints")
+    } if "complaints" in inspector.get_table_names() else set()
+
+    if "location_id" not in complaint_columns:
+        with target_engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE complaints ADD COLUMN location_id INTEGER "
+                "REFERENCES locations(id)"
+            ))
+
+    with target_engine.begin() as connection:
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_complaints_location_id "
+            "ON complaints (location_id)"
+        ))
+        connection.execute(text(
+            "INSERT INTO locations "
+            "(name, slug, is_active, created_at, updated_at) "
+            "SELECT :name, :slug, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+            "WHERE NOT EXISTS (SELECT 1 FROM locations WHERE slug = :slug)"
+        ), {"name": "Dadar", "slug": "dadar"})
+        connection.execute(text(
+            "INSERT INTO locations "
+            "(name, slug, is_active, created_at, updated_at) "
+            "SELECT :name, :slug, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+            "WHERE NOT EXISTS (SELECT 1 FROM locations WHERE slug = :slug)"
+        ), {"name": "Wadala", "slug": "wadala"})
+        connection.execute(text(
+            "INSERT INTO locations "
+            "(name, slug, is_active, created_at, updated_at) "
+            "SELECT :name, :slug, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
+            "WHERE NOT EXISTS (SELECT 1 FROM locations WHERE slug = :slug)"
+        ), {"name": "Kalyan-Dombivli", "slug": "kalyan-dombivli"})
+
+
 def run_migrations(target_engine=None):
     """
     Idempotent schema migration for SQLite databases.
@@ -79,6 +134,7 @@ def run_migrations(target_engine=None):
 
     # Ensure all declared tables exist (safe no-op for existing tables)
     Base.metadata.create_all(bind=target_engine)
+    _ensure_location_schema(target_engine)
 
     from sqlalchemy import inspect as sa_inspect
 
@@ -113,4 +169,3 @@ def get_db():
         yield db          # hand the session to the route function
     finally:
         db.close()        # always close the session when done
-

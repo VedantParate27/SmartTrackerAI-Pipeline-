@@ -12,10 +12,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import CleanupProof, CleanupTask, User, WasteAIResult, utcnow
+from models import CleanupProof, CleanupTask, User, WasteAIResult, cleaner_locations, utcnow
 from routers.complaints import get_current_cleaner_user
 from routers.eventlog import log_event
 from schemas import CleanerTaskResponse, CleanupProofResponse
+from task_timeline import first_proof_uploaded_at
 import image_utils
 from waste_ai_service import schedule_cleanup_verification
 
@@ -48,10 +49,23 @@ def build_cleaner_task_response(task: CleanupTask) -> CleanerTaskResponse:
         if hasattr(task.assigned_at, "isoformat")
         else str(task.assigned_at)
     )
+    started_at_str = (
+        task.started_at.isoformat()
+        if task.started_at and hasattr(task.started_at, "isoformat")
+        else (str(task.started_at) if task.started_at else None)
+    )
     completed_at_str = (
         task.completed_at.isoformat()
         if task.completed_at and hasattr(task.completed_at, "isoformat")
         else (str(task.completed_at) if task.completed_at else None)
+    )
+    # First proof upload — derived from the append-only proof history, so it
+    # can never be overwritten by a later upload. None until a proof exists.
+    first_proof_at = first_proof_uploaded_at(task.proofs)
+    first_proof_at_str = (
+        first_proof_at.isoformat()
+        if first_proof_at and hasattr(first_proof_at, "isoformat")
+        else (str(first_proof_at) if first_proof_at else None)
     )
 
     return CleanerTaskResponse(
@@ -59,7 +73,9 @@ def build_cleaner_task_response(task: CleanupTask) -> CleanerTaskResponse:
         tracking_id=complaint.tracking_id,
         status=task.status,
         assigned_at=assigned_at_str,
+        started_at=started_at_str,
         completed_at=completed_at_str,
+        first_proof_uploaded_at=first_proof_at_str,
         notes=task.notes,
         complaint_text=complaint.complaint_text,
         waste_type=complaint.waste_type,
@@ -72,8 +88,37 @@ def build_cleaner_task_response(task: CleanupTask) -> CleanerTaskResponse:
     )
 
 
+def _active_granted_location_ids(db: Session, cleaner_id: int) -> set:
+    """Location IDs the cleaner currently holds an ACTIVE grant for.
+
+    A revoked grant (cleaner_locations.is_active=False) is deliberately
+    excluded: a revoked permission can never authorize access to a
+    location-specific task. The set is empty for a cleaner who never had a
+    grant — and an empty set still permits location-less legacy tasks.
+    """
+    return {
+        row.location_id
+        for row in db.execute(
+            cleaner_locations.select().where(
+                cleaner_locations.c.cleaner_id == cleaner_id,
+                cleaner_locations.c.is_active.is_(True),
+            )
+        ).all()
+    }
+
+
 def _get_task_checked(db: Session, task_id: str, current_user: User) -> CleanupTask:
-    """Shared lookup + object-level authorization for cleaner task endpoints."""
+    """Shared lookup + object-level authorization for cleaner task endpoints.
+
+    Three checks, in order:
+    1. the task must exist (404 otherwise);
+    2. the caller must be the assigned cleaner, or an admin (403 otherwise);
+    3. when the task's complaint carries a location, the caller must hold an
+       ACTIVE grant for that location (403 otherwise). A revoked or inactive
+       grant removes the access it once gave — it can never authorize the
+       task. Complaints without a location keep working unchanged: they carry
+       no location requirement at all.
+    """
     task = db.query(CleanupTask).filter(CleanupTask.task_id == task_id).first()
     if not task:
         raise HTTPException(
@@ -85,6 +130,15 @@ def _get_task_checked(db: Session, task_id: str, current_user: User) -> CleanupT
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not assigned to this task.",
         )
+    if current_user.role != "admin":
+        location_id = task.complaint.location_id
+        if location_id is not None:
+            granted = _active_granted_location_ids(db, current_user.id)
+            if location_id not in granted:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Your location permission for this task has been revoked.",
+                )
     return task
 
 
@@ -101,11 +155,26 @@ def get_cleaner_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_cleaner_user),
 ):
-    """Return tasks assigned to the authenticated cleaner."""
+    """Return tasks assigned to the authenticated cleaner.
+
+    A task whose complaint carries a location is only listed while the
+    cleaner still holds an ACTIVE grant for that location — a revoked grant
+    removes the task from the list. Location-less legacy tasks are always
+    listed. Admins keep the unrestricted view.
+    """
     query = db.query(CleanupTask)
     if current_user.role != "admin":
         query = query.filter(CleanupTask.assigned_cleaner_id == current_user.id)
     tasks = query.order_by(CleanupTask.assigned_at.desc()).all()
+
+    if current_user.role != "admin":
+        granted = _active_granted_location_ids(db, current_user.id)
+        tasks = [
+            task
+            for task in tasks
+            if task.complaint.location_id is None
+            or task.complaint.location_id in granted
+        ]
 
     return [build_cleaner_task_response(t) for t in tasks]
 
@@ -145,8 +214,18 @@ def start_cleanup_task(
 ):
     """Record that the cleaner began the cleanup. Optional but recommended:
     it gives process mining an explicit field-execution start time; otherwise
-    the first proof upload is the only field-stage signal."""
+    the first proof upload is the only field-stage signal.
+
+    `started_at` is written ONCE, on the first genuine start of the task.
+    A repeated start request never resets it, and a task that was already
+    in_progress when the column was introduced receives the value on its next
+    start call. It is never back-filled from other timestamps.
+    """
     task = _get_task_checked(db, task_id, current_user)
+
+    # The status the task was in BEFORE this request — a repeated start of an
+    # already in_progress task must not claim it came from 'assigned'.
+    previous_status = task.status
 
     if task.status == "assigned":
         task.status = "in_progress"
@@ -156,13 +235,17 @@ def start_cleanup_task(
             detail=f"Task cannot be started from status '{task.status}'.",
         )
 
+    # Field-execution start timestamp: recorded once, never reset.
+    if task.started_at is None:
+        task.started_at = utcnow()
+
     log_event(
         db,
         case_id=task.complaint.tracking_id,
         activity="task_started",
         actor_id=current_user.id,
         actor_role="cleaner",
-        old_value="assigned",
+        old_value=previous_status,
         new_value="in_progress",
     )
 

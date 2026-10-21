@@ -28,6 +28,25 @@ TriageMode = Literal["manual", "ai_assisted"]
 
 
 # ---------------------------------------------------------------------------
+# EMAIL NORMALIZATION
+# ---------------------------------------------------------------------------
+def normalize_email(value: str) -> str:
+    """
+    Canonical form of an email address: trimmed and lowercased.
+
+    Every email that enters the system is passed through this helper, so the
+    value that gets stored is exactly the value that is looked up later.
+    Lookups additionally compare case-insensitively, so accounts that were
+    created before this normalization existed (mixed-case rows) stay usable.
+
+    Lowercasing the whole address — not just the domain — is the de-facto
+    standard for consumer applications; RFC 5321 treats the local part as
+    case-sensitive, but no real mailbox distinguishes "User@" from "user@".
+    """
+    return value.strip().lower()
+
+
+# ---------------------------------------------------------------------------
 # SCHEMA 1 — RegisterRequest
 # ---------------------------------------------------------------------------
 class RegisterRequest(BaseModel):
@@ -66,6 +85,12 @@ class RegisterRequest(BaseModel):
         description="Department the user belongs to (optional)",
         examples=["Finance"],
     )
+
+    @field_validator("email")
+    @classmethod
+    def email_must_be_normalized(cls, value: str) -> str:
+        """Store the address in one canonical form (trimmed, lowercased)."""
+        return normalize_email(value)
 
     @field_validator("name")
     @classmethod
@@ -112,6 +137,12 @@ class LoginRequest(BaseModel):
         description="Account password",
         examples=["secret123"],
     )
+
+    @field_validator("email")
+    @classmethod
+    def email_must_be_normalized(cls, value: str) -> str:
+        """Look the account up in the same canonical form it was stored in."""
+        return normalize_email(value)
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +206,18 @@ class CreateComplaintRequest(BaseModel):
     longitude: Optional[float] = Field(default=None, description="Longitude coordinate")
     address_text: Optional[str] = Field(default=None, max_length=255, description="Human-readable location address/landmark")
 
+    # Explicit location reference (optional, nullable).
+    # Points at the Location record where the waste was ACTUALLY FOUND —
+    # NOT at the citizen's residence or registered address. Omitting it (or
+    # sending null) keeps the legacy behaviour: the complaint simply carries
+    # no location. The value is never inferred from latitude/longitude/
+    # address_text; the API validates it against the locations table.
+    location_id: Optional[int] = Field(
+        default=None,
+        description="ID of the Location where the waste was found (null = not recorded)",
+        examples=[1],
+    )
+
     @field_validator("complaint_text")
     @classmethod
     def complaint_text_must_not_be_blank(cls, value: str) -> str:
@@ -223,6 +266,13 @@ class ComplaintResponse(BaseModel):
     latitude: Optional[float] = Field(default=None, description="Latitude coordinate")
     longitude: Optional[float] = Field(default=None, description="Longitude coordinate")
     address_text: Optional[str] = Field(default=None, description="Location text")
+
+    # Location where the waste was actually found.
+    # null for legacy complaints and for submissions that stated no location.
+    location_id: Optional[int] = Field(
+        default=None,
+        description="ID of the Location where the waste was found (null = not recorded)",
+    )
 
     # Research fields (surfaced for admin UI + frontend work)
     triage_mode: Optional[TriageMode] = Field(default=None, description="manual | ai_assisted | null (not yet triaged)")
@@ -438,7 +488,24 @@ class CleanerTaskResponse(BaseModel):
     tracking_id: str
     status: str
     assigned_at: str
+    started_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the cleaner genuinely started the work. Recorded once on the "
+            "first start request and never reset. null when the task was never "
+            "explicitly started."
+        ),
+    )
     completed_at: Optional[str] = None
+    first_proof_uploaded_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the first proof was uploaded for this task (derived from the "
+            "append-only proof history). A proxy for the end of the cleaning "
+            "work — NOT a verified physical finish time. null until a proof "
+            "has been uploaded."
+        ),
+    )
     notes: Optional[str] = None
     complaint_text: str
     waste_type: Optional[str] = None
@@ -451,7 +518,10 @@ class CleanerTaskResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    @field_validator("assigned_at", "completed_at", mode="before")
+    @field_validator(
+        "assigned_at", "started_at", "completed_at", "first_proof_uploaded_at",
+        mode="before",
+    )
     @classmethod
     def serialise_task_timestamps(cls, value):
         if value is None:
@@ -929,7 +999,28 @@ class AdminProofReviewResponse(BaseModel):
     task_status: str
     task_assigned_cleaner_id: Optional[int] = None
     assigned_at: str
-    completed_at: Optional[str] = None
+    started_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the cleaner genuinely started the work (recorded once, never "
+            "reset). null when the task was never explicitly started."
+        ),
+    )
+    completed_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "Admin-verification timestamp — NOT the physical end of the "
+            "cleaning work."
+        ),
+    )
+    first_proof_uploaded_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the first proof was uploaded for this task (derived from the "
+            "append-only proof history). A proxy for the end of the cleaning "
+            "work — NOT a verified physical finish time."
+        ),
+    )
 
     complaint_id: int
     tracking_id: str
@@ -946,7 +1037,10 @@ class AdminProofReviewResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    @field_validator("assigned_at", "completed_at", mode="before")
+    @field_validator(
+        "assigned_at", "started_at", "completed_at", "first_proof_uploaded_at",
+        mode="before",
+    )
     @classmethod
     def serialise_task_review_timestamps(cls, value):
         if value is None:
@@ -954,3 +1048,148 @@ class AdminProofReviewResponse(BaseModel):
         if hasattr(value, "isoformat"):
             return value.isoformat()
         return str(value)
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 14 — LOCATION MANAGEMENT  (Tasks 1 & 2)
+# ---------------------------------------------------------------------------
+
+class LocationCreateRequest(BaseModel):
+    """Admin: create a new location."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Human-readable location name (e.g. 'Dadar West')",
+        examples=["Dadar West"],
+    )
+    slug: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        description="URL-safe identifier (lowercase, hyphens only, e.g. 'dadar-west')",
+        examples=["dadar-west"],
+    )
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Name cannot be blank or whitespace only.")
+        return stripped
+
+
+class LocationUpdateRequest(BaseModel):
+    """Admin: update name and/or is_active for an existing location."""
+
+    name: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="New human-readable name (optional)",
+    )
+    is_active: Optional[bool] = Field(
+        default=None,
+        description="Set to false to deactivate; true to re-activate (optional)",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped if stripped else None
+
+    @field_validator("is_active", mode="before")
+    @classmethod
+    def at_least_one_field(cls, value):
+        return value  # model_validator below does the real check
+
+    @model_validator(mode="after")
+    def require_at_least_one(self) -> "LocationUpdateRequest":
+        if self.name is None and self.is_active is None:
+            raise ValueError("At least one field (name or is_active) must be provided.")
+        return self
+
+
+class LocationResponse(BaseModel):
+    """A location record as returned by the API."""
+
+    id: int
+    name: str
+    slug: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def serialise_location_timestamps(cls, value):
+        if value is None:
+            return ""
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+class SetComplaintLocationRequest(BaseModel):
+    """Admin: associate (or clear) a location_id on an existing complaint.
+
+    Pass location_id=null to un-link the location.
+    This endpoint never infers a location from coordinates or address text.
+    """
+
+    location_id: Optional[int] = Field(
+        default=...,
+        description="Location ID to assign, or null to clear the location link",
+    )
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 15 — LOCATION-WISE STATISTICS  (Tasks 3 & 5)
+# ---------------------------------------------------------------------------
+
+class LocationStats(BaseModel):
+    """Location-wise operational statistics for a single location.
+
+    Counting rules (join-safe — each count comes from its own grouped query,
+    so several proof rows for one task can never multiply a task count):
+
+    - complaints_reported: distinct complaints linked to this location.
+      Complaints without a location are never attributed to any location.
+    - tasks_assigned: distinct cleanup tasks with a non-null assigned cleaner.
+    - tasks_verified: distinct tasks with status='verified' AND a non-null
+      completed_at (the admin-verification timestamp).
+    - proofs_submitted: distinct proof records, whatever their state.
+    - proofs_verified: distinct proof records carrying authoritative HUMAN
+      verification evidence — verification_status='verified' AND verified_by
+      IS NOT NULL AND verified_at IS NOT NULL. A submitted-but-unverified
+      proof never counts, and neither does a row flagged 'verified' without a
+      human verifier (e.g. system-seeded research data).
+
+    A resolved/closed complaint is never counted as proof of physical
+    collection, and no weight, volume or tonnage is reported — those values
+    are not measured anywhere in this system.
+    """
+
+    location_id: int
+    location_name: str
+    location_slug: str
+    is_active: bool
+
+    complaints_reported: int
+    tasks_assigned: int
+    tasks_verified: int
+    proofs_submitted: int
+    proofs_verified: int
+
+    # Supplementary split of complaints_reported (retained from the previous
+    # schema; open + resolved always equals complaints_reported).
+    open_complaints: int
+    resolved_complaints: int

@@ -28,6 +28,8 @@ from sqlalchemy import (
     DateTime,       # date + time values
     ForeignKey,     # links one table to another
     Boolean,        # True / False
+    Index,
+    Table,
 )
 from sqlalchemy.orm import relationship, backref  # defines the Python-level link between models
 
@@ -43,7 +45,45 @@ def utcnow():
 
 
 # ---------------------------------------------------------------------------
-# MODEL 1 — User
+# MODEL 1 — Location
+# ---------------------------------------------------------------------------
+class Location(Base):
+    __tablename__ = "locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    slug = Column(String(100), nullable=False, unique=True, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+
+    complaints = relationship("Complaint", back_populates="location")
+    permitted_cleaners = relationship(
+        "User",
+        secondary="cleaner_locations",
+        back_populates="permitted_locations",
+    )
+
+
+cleaner_locations = Table(
+    "cleaner_locations",
+    Base.metadata,
+    Column("cleaner_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("location_id", Integer, ForeignKey("locations.id"), primary_key=True),
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("created_at", DateTime(timezone=True), default=utcnow, nullable=False),
+    Index("ix_cleaner_locations_cleaner_id", "cleaner_id"),
+    Index("ix_cleaner_locations_location_id", "location_id"),
+)
+
+
+# ---------------------------------------------------------------------------
+# MODEL 2 — User
 # ---------------------------------------------------------------------------
 # Maps to a table called "users" in smarttracker.db.
 # Stores everyone who can log in or submit complaints.
@@ -67,13 +107,18 @@ class User(Base):
 
     # --- Relationship ---
     complaints = relationship("Complaint", back_populates="owner")
+    permitted_locations = relationship(
+        "Location",
+        secondary=cleaner_locations,
+        back_populates="permitted_cleaners",
+    )
 
     def __repr__(self):
         return f"<User id={self.id} email={self.email!r} role={self.role!r}>"
 
 
 # ---------------------------------------------------------------------------
-# MODEL 2 — Complaint
+# MODEL 3 — Complaint
 # ---------------------------------------------------------------------------
 class Complaint(Base):
     __tablename__ = "complaints"
@@ -118,6 +163,7 @@ class Complaint(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     address_text = Column(String(255), nullable=True)
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)
 
     # --- Research / DWM fields (Phase 3) -----------------------------------
     # triage_mode: NULL = not yet triaged; "manual" = human-only cohort;
@@ -137,6 +183,7 @@ class Complaint(Base):
 
     # --- Relationships ---
     owner = relationship("User", back_populates="complaints")
+    location = relationship("Location", back_populates="complaints")
     cleanup_task = relationship("CleanupTask", back_populates="complaint", uselist=False)
     # Waste-AI analysis history: append-only, one row per analysis attempt
     # (re-uploads / re-runs add rows; nothing is ever overwritten).
@@ -211,7 +258,7 @@ class AppStateSnapshot(Base):
 
 
 # ---------------------------------------------------------------------------
-# MODEL 4 — Response
+# MODEL 5 — Response
 # ---------------------------------------------------------------------------
 class Response(Base):
     __tablename__ = "responses"
@@ -231,7 +278,7 @@ class Response(Base):
 
 
 # ---------------------------------------------------------------------------
-# MODEL 5 — CleanupTask
+# MODEL 6 — CleanupTask
 # ---------------------------------------------------------------------------
 class CleanupTask(Base):
     __tablename__ = "cleanup_tasks"
@@ -248,6 +295,7 @@ class CleanupTask(Base):
     assigned_cleaner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     status = Column(String(30), nullable=False, default="assigned")  # assigned, in_progress, proof_submitted, verified, rejected
     assigned_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
 

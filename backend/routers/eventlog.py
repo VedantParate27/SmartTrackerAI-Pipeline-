@@ -20,6 +20,7 @@ from taxonomy import EVENT_ACTIVITIES
 
 import csv
 import io
+from datetime import datetime
 
 
 # ---------------------------------------------------------------------------
@@ -34,12 +35,20 @@ def log_event(
     old_value: Optional[str] = None,
     new_value: Optional[str] = None,
     meta: Optional[dict] = None,
+    timestamp: Optional[datetime] = None,
 ) -> EventLog:
     """Record one lifecycle event. Never raises into the caller's flow —
-    logging must not be able to break the workflow it observes."""
+    logging must not be able to break the workflow it observes.
+
+    `timestamp` overrides the wall-clock default. It exists for the synthetic
+    data generator, which replays a historical timeline and therefore has to
+    stamp each event with the moment it describes (so the seeded event chain
+    stays chronologically consistent with the rows it references). Live
+    callers always leave it unset and get the current UTC time.
+    """
     if activity not in EVENT_ACTIVITIES:
         raise ValueError(f"Unknown activity '{activity}' — extend taxonomy.EVENT_ACTIVITIES.")
-    event = EventLog(
+    fields = dict(
         case_id=case_id,
         activity=activity,
         actor_id=actor_id,
@@ -48,6 +57,9 @@ def log_event(
         new_value=new_value,
         meta_json=json.dumps(meta, default=str) if meta else None,
     )
+    if timestamp is not None:
+        fields["timestamp"] = timestamp
+    event = EventLog(**fields)
     try:
         db.add(event)
         db.flush()  # assigns event.id without committing the caller's transaction
