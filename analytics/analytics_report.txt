@@ -1,0 +1,41 @@
+SMARTTRACKER ANALYTICS REPORT
+===================================
+Generated: 2026-10-21T22:20:13
+Dataset: Synthetic demonstration data
+Total records: 300
+
+LOCATION COMPARISON
+-----------------------------------
+Kalyan-Dombivali: 118 records (39.33%)
+Dadar: 91 records (30.33%)
+Wadala: 91 records (30.33%)
+
+SEVERITY DISTRIBUTION
+-----------------------------------
+domestic: 173
+moderate: 92
+dump_scale: 35
+
+WASTE TYPE DISTRIBUTION
+-----------------------------------
+mixed: 49
+e_waste: 60
+sanitary: 53
+dry: 50
+hazardous: 43
+wet: 45
+
+ESTIMATED CLEANUP TIMES
+-----------------------------------
+Kalyan-Dombivali | domestic | 14.8 minutes | 67 records
+Kalyan-Dombivali | moderate | 38.2 minutes | 42 records
+Kalyan-Dombivali | dump_scale | 114.1 minutes | 9 records
+Dadar | moderate | 39.5 minutes | 27 records
+Dadar | domestic | 15.7 minutes | 51 records
+Dadar | dump_scale | 141.5 minutes | 13 records
+Wadala | domestic | 17.0 minutes | 55 records
+Wadala | dump_scale | 147.1 minutes | 13 records
+Wadala | moderate | 50.9 minutes | 23 records
+
+Note: All records are synthetic. Estimates are a baseline,
+not validated real-world cleanup-time measurements.
