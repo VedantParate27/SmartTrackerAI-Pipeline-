@@ -862,7 +862,12 @@ def review_waste_complaint(
             detail="complaint not found",
         )
 
-    if complaint["status"] != "awaiting_review":
+    if complaint["status"] not in ("awaiting_review", "submitted"):
+        if complaint["status"] == "assigned":
+            raise HTTPException(
+                status_code=409,
+                detail="complaint has already been reviewed and assigned to a cleaner",
+            )
         raise HTTPException(
             status_code=409,
             detail="complaint is not awaiting review",

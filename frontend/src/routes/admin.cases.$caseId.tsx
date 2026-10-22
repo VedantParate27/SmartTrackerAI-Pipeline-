@@ -5,7 +5,9 @@ import {
   getBackendImageUrl,
   getComplaint,
   listCleaners,
+  listCleanupTasks,
   reviewWasteComplaint,
+  type AdminCleanupTask,
   type CleanerUser,
 } from '#/lib/api'
 import {
@@ -985,7 +987,9 @@ function AuditPanel({ item }: { item: Complaint }) {
 }
 
 function WasteReviewPanel({ item, onRefresh }: { item: Complaint; onRefresh: () => void }) {
+  const isWasteCase = Boolean(item.wasteType || item.imagePath)
   const [cleaners, setCleaners] = useState<CleanerUser[]>([])
+  const [task, setTask] = useState<AdminCleanupTask | null>(null)
   const [decision, setDecision] = useState<'approve_cleanup' | 'reject'>('approve_cleanup')
   const [cleanerId, setCleanerId] = useState<string>('')
   const [notes, setNotes] = useState('')
@@ -993,45 +997,64 @@ function WasteReviewPanel({ item, onRefresh }: { item: Complaint; onRefresh: () 
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  
+  const canAssign =
+    item.status === 'Pending Review' ||
+    item.status === 'Submitted' ||
+    item.status === 'Manual Triage'
+
   useEffect(() => {
     let cancelled = false
 
-    listCleaners()
-      .then((data) => {
+    listCleanupTasks()
+      .then((tasks) => {
         if (cancelled) return
-
-        setCleaners(data)
-        setCleanerId((current) => {
-          if (current && data.some((cleaner) => String(cleaner.id) === current)) {
-            return current
-          }
-
-          return data.length > 0 ? String(data[0].id) : ''
-        })
-
-        if (data.length === 0) {
-          setError('No cleaner accounts were found. Create a cleaner account before assigning this complaint.')
-        } else {
-          setError(null)
-        }
+        const found = tasks.find((t) => String(t.complaint_id) === String(item.id))
+        if (found) setTask(found)
       })
       .catch((err: unknown) => {
-        if (cancelled) return
-
-        console.error('Failed to list cleaners:', err)
-        setError(
-          err instanceof Error
-            ? `Could not load cleaners: ${err.message}`
-            : 'Could not load cleaners. Check your Admin login and API connection.',
-        )
+        console.error('Failed to load cleanup tasks:', err)
       })
+
+    if (canAssign) {
+      listCleaners()
+        .then((data) => {
+          if (cancelled) return
+
+          setCleaners(data)
+          setCleanerId((current) => {
+            if (current && data.some((cleaner) => String(cleaner.id) === current)) {
+              return current
+            }
+
+            return data.length > 0 ? String(data[0].id) : ''
+          })
+
+          if (data.length === 0) {
+            setError('No cleaner accounts were found. Create a cleaner account before assigning this complaint.')
+          } else {
+            setError(null)
+          }
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return
+
+          console.error('Failed to list cleaners:', err)
+          setError(
+            err instanceof Error
+              ? `Could not load cleaners: ${err.message}`
+              : 'Could not load cleaners. Check your Admin login and API connection.',
+          )
+        })
+    }
 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [item.id, item.status, canAssign])
 
+  if (!isWasteCase) {
+    return null
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1110,86 +1133,155 @@ function WasteReviewPanel({ item, onRefresh }: { item: Complaint; onRefresh: () 
         </div>
 
         <div className="border-t border-(--line) pt-4 md:border-t-0 md:border-l md:pl-4 md:pt-0">
-          <h3 className="kicker">Admin Decision</h3>
-          <form className="mt-2 grid gap-3" onSubmit={handleSubmit}>
-            <div>
-              <label className="label">Review Decision</label>
-              <div className="flex gap-4 mt-1">
-                <label className="flex items-center gap-1.5 cursor-pointer text-sm font-semibold">
-                  <input
-                    type="radio"
-                    name="decision"
-                    value="approve_cleanup"
-                    checked={decision === 'approve_cleanup'}
-                    onChange={() => setDecision('approve_cleanup')}
-                  />
-                  Approve & Assign Cleanup
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer text-sm font-semibold">
-                  <input
-                    type="radio"
-                    name="decision"
-                    value="reject"
-                    checked={decision === 'reject'}
-                    onChange={() => setDecision('reject')}
-                  />
-                  Reject Complaint
-                </label>
-              </div>
-            </div>
+          {canAssign ? (
+            <>
+              <h3 className="kicker">Admin Decision</h3>
+              <form className="mt-2 grid gap-3" onSubmit={handleSubmit}>
+                <div>
+                  <label className="label">Review Decision</label>
+                  <div className="flex gap-4 mt-1">
+                    <label className="flex items-center gap-1.5 cursor-pointer text-sm font-semibold">
+                      <input
+                        type="radio"
+                        name="decision"
+                        value="approve_cleanup"
+                        checked={decision === 'approve_cleanup'}
+                        onChange={() => setDecision('approve_cleanup')}
+                      />
+                      Approve & Assign Cleanup
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-sm font-semibold">
+                      <input
+                        type="radio"
+                        name="decision"
+                        value="reject"
+                        checked={decision === 'reject'}
+                        onChange={() => setDecision('reject')}
+                      />
+                      Reject Complaint
+                    </label>
+                  </div>
+                </div>
 
-            {decision === 'approve_cleanup' ? (
-              <div>
-                <label className="label" htmlFor="cleaner-select">
-                  Assign Cleaner
-                </label>
-                <select
-                  id="cleaner-select"
-                  className="select"
-                  value={cleanerId}
-                  onChange={(e) => setCleanerId(e.target.value)}
+                {decision === 'approve_cleanup' ? (
+                  <div>
+                    <label className="label" htmlFor="cleaner-select">
+                      Assign Cleaner
+                    </label>
+                    <select
+                      id="cleaner-select"
+                      className="select"
+                      value={cleanerId}
+                      onChange={(e) => setCleanerId(e.target.value)}
+                    >
+                      {cleaners.length === 0 ? (
+                        <option value="">No available cleaners found</option>
+                      ) : (
+                        cleaners.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.email})
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                ) : null}
+
+                <div>
+                  <label className="label" htmlFor="review-notes">
+                    Notes (Optional)
+                  </label>
+                  <input
+                    id="review-notes"
+                    className="input"
+                    value={notes}
+                    placeholder="Enter assignment notes or rejection reason..."
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary mt-2"
+                  disabled={
+                    loading ||
+                    (decision === 'approve_cleanup' &&
+                      (!cleanerId ||
+                        !cleaners.some((cleaner) => String(cleaner.id) === cleanerId)))
+                  }
                 >
-                  {cleaners.length === 0 ? (
-                    <option value="">No available cleaners found</option>
-                  ) : (
-                    cleaners.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.email})
-                      </option>
-                    ))
-                  )}
-                </select>
+                  {loading
+                    ? 'Submitting...'
+                    : decision === 'approve_cleanup'
+                      ? 'Approve & Assign Cleaner'
+                      : 'Reject Complaint'}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <h3 className="kicker">Cleanup Status</h3>
+              <div className="mt-2 rounded bg-(--surface-2) p-3 border border-(--line)">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-sm">
+                    {item.status === 'Assigned to Department'
+                      ? 'Cleanup Task Assigned'
+                      : item.status === 'In Progress'
+                        ? 'Cleanup In Progress'
+                        : item.status === 'Verification'
+                          ? 'Awaiting Cleanup Verification'
+                          : item.status === 'Resolved'
+                            ? 'Cleanup Completed & Resolved'
+                            : item.status === 'Rejected'
+                              ? 'Complaint Rejected'
+                              : item.status}
+                  </span>
+                  <StatusPill status={item.status} />
+                </div>
+
+                <p className="mt-1 text-xs muted">
+                  {item.status === 'Assigned to Department'
+                    ? 'This grievance has already been reviewed and assigned to a cleaner.'
+                    : item.status === 'In Progress'
+                      ? 'The assigned cleaner is actively working on resolving this complaint on-site.'
+                      : item.status === 'Verification'
+                        ? 'Cleanup proof photos have been submitted by the cleaner and are awaiting review.'
+                        : item.status === 'Resolved'
+                          ? 'This waste grievance has been cleaned up and verified by admin.'
+                          : item.status === 'Rejected'
+                            ? 'This complaint was rejected during review.'
+                            : 'This case is currently not awaiting review.'}
+                </p>
+
+                {task ? (
+                  <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="kicker">Assigned Cleaner</dt>
+                      <dd className="m-0 font-semibold">{task.cleaner_name} ({task.cleaner_email})</dd>
+                    </div>
+                    <div>
+                      <dt className="kicker">Assigned At</dt>
+                      <dd className="m-0">{formatDateTime(task.created_at)}</dd>
+                    </div>
+                    {task.notes ? (
+                      <div className="sm:col-span-2">
+                        <dt className="kicker">Assignment Notes</dt>
+                        <dd className="m-0 italic">{task.notes}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                ) : null}
+
+                {item.status === 'Verification' ? (
+                  <div className="mt-3 pt-2 border-t border-(--line)">
+                    <Link to="/admin/verification" className="btn btn-primary btn-sm">
+                      Go to Cleanup Verification →
+                    </Link>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-
-            <div>
-              <label className="label" htmlFor="review-notes">
-                Notes (Optional)
-              </label>
-              <input
-                id="review-notes"
-                className="input"
-                value={notes}
-                placeholder="Enter assignment notes or rejection reason..."
-                onChange={(e) => setNotes(e.target.value)}
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="btn btn-primary mt-2"
-              
-              disabled={
-                loading ||
-                (decision === 'approve_cleanup' &&
-                  (!cleanerId ||
-                    !cleaners.some((cleaner) => String(cleaner.id) === cleanerId)))
-              }
-
-            >
-              {loading ? 'Submitting...' : decision === 'approve_cleanup' ? 'Approve & Assign Cleaner' : 'Reject Complaint'}
-            </button>
-          </form>
+            </>
+          )}
         </div>
       </div>
     </SectionCard>
