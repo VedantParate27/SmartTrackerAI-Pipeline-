@@ -704,7 +704,7 @@ async function send(
   return response
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit = {},
   timeoutMs?: number,
@@ -723,7 +723,7 @@ async function nullOn404<T>(pending: Promise<T>): Promise<T | null> {
   }
 }
 
-function bearer(token: string) {
+export function bearer(token: string) {
   return { Authorization: `Bearer ${token}` }
 }
 

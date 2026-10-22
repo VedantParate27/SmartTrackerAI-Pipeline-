@@ -65,6 +65,13 @@ function AdminLayout() {
         >
           Event log &amp; exports
         </Link>
+        <Link
+          to="/admin/analytics"
+          className="nav-link shrink-0"
+          activeProps={{ className: 'nav-link is-active shrink-0' }}
+        >
+          Location analytics
+        </Link>
       </nav>
 
       <div className="mt-5">

@@ -15,8 +15,10 @@ import { Route as CleanerRouteImport } from './routes/cleaner'
 import { Route as SubmitRouteImport } from './routes/submit'
 import { Route as TrackRouteImport } from './routes/track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminAnalyticsRouteImport } from './routes/admin.analytics'
 import { Route as AdminEventsRouteImport } from './routes/admin.events'
 import { Route as CleanerIndexRouteImport } from './routes/cleaner.index'
+import { Route as CleanerNotificationsRouteImport } from './routes/cleaner.notifications'
 import { Route as AdminCasesCaseIdRouteImport } from './routes/admin.cases.$caseId'
 import { Route as CleanerTasksTaskIdRouteImport } from './routes/cleaner.tasks.$taskId'
 
@@ -50,6 +52,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminAnalyticsRoute = AdminAnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminEventsRoute = AdminEventsRouteImport.update({
   id: '/events',
   path: '/events',
@@ -58,6 +65,11 @@ const AdminEventsRoute = AdminEventsRouteImport.update({
 const CleanerIndexRoute = CleanerIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => CleanerRoute,
+} as any)
+const CleanerNotificationsRoute = CleanerNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => CleanerRoute,
 } as any)
 const AdminCasesCaseIdRoute = AdminCasesCaseIdRouteImport.update({
@@ -77,7 +89,9 @@ export interface FileRoutesByFullPath {
   '/cleaner': typeof CleanerRouteWithChildren
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/events': typeof AdminEventsRoute
+  '/cleaner/notifications': typeof CleanerNotificationsRoute
   '/admin/': typeof AdminIndexRoute
   '/cleaner/': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
@@ -87,7 +101,9 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/events': typeof AdminEventsRoute
+  '/cleaner/notifications': typeof CleanerNotificationsRoute
   '/admin': typeof AdminIndexRoute
   '/cleaner': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
@@ -100,7 +116,9 @@ export interface FileRoutesById {
   '/cleaner': typeof CleanerRouteWithChildren
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/events': typeof AdminEventsRoute
+  '/cleaner/notifications': typeof CleanerNotificationsRoute
   '/admin/': typeof AdminIndexRoute
   '/cleaner/': typeof CleanerIndexRoute
   '/admin/cases/$caseId': typeof AdminCasesCaseIdRoute
@@ -114,7 +132,9 @@ export interface FileRouteTypes {
     | '/cleaner'
     | '/submit'
     | '/track'
+    | '/admin/analytics'
     | '/admin/events'
+    | '/cleaner/notifications'
     | '/admin/'
     | '/cleaner/'
     | '/admin/cases/$caseId'
@@ -124,7 +144,9 @@ export interface FileRouteTypes {
     | '/'
     | '/submit'
     | '/track'
+    | '/admin/analytics'
     | '/admin/events'
+    | '/cleaner/notifications'
     | '/admin'
     | '/cleaner'
     | '/admin/cases/$caseId'
@@ -136,7 +158,9 @@ export interface FileRouteTypes {
     | '/cleaner'
     | '/submit'
     | '/track'
+    | '/admin/analytics'
     | '/admin/events'
+    | '/cleaner/notifications'
     | '/admin/'
     | '/cleaner/'
     | '/admin/cases/$caseId'
@@ -195,6 +219,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/analytics': {
+      id: '/admin/analytics'
+      path: '/analytics'
+      fullPath: '/admin/analytics'
+      preLoaderRoute: typeof AdminAnalyticsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/events': {
       id: '/admin/events'
       path: '/events'
@@ -207,6 +238,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/cleaner/'
       preLoaderRoute: typeof CleanerIndexRouteImport
+      parentRoute: typeof CleanerRoute
+    }
+    '/cleaner/notifications': {
+      id: '/cleaner/notifications'
+      path: '/notifications'
+      fullPath: '/cleaner/notifications'
+      preLoaderRoute: typeof CleanerNotificationsRouteImport
       parentRoute: typeof CleanerRoute
     }
     '/admin/cases/$caseId': {
@@ -227,12 +265,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
+  AdminAnalyticsRoute: typeof AdminAnalyticsRoute
   AdminEventsRoute: typeof AdminEventsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminCasesCaseIdRoute: typeof AdminCasesCaseIdRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminAnalyticsRoute: AdminAnalyticsRoute,
   AdminEventsRoute: AdminEventsRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminCasesCaseIdRoute: AdminCasesCaseIdRoute,
@@ -241,11 +281,13 @@ const AdminRouteChildren: AdminRouteChildren = {
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
 
 interface CleanerRouteChildren {
+  CleanerNotificationsRoute: typeof CleanerNotificationsRoute
   CleanerIndexRoute: typeof CleanerIndexRoute
   CleanerTasksTaskIdRoute: typeof CleanerTasksTaskIdRoute
 }
 
 const CleanerRouteChildren: CleanerRouteChildren = {
+  CleanerNotificationsRoute: CleanerNotificationsRoute,
   CleanerIndexRoute: CleanerIndexRoute,
   CleanerTasksTaskIdRoute: CleanerTasksTaskIdRoute,
 }
