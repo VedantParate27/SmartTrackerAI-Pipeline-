@@ -17,6 +17,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as SubmitRouteImport } from './routes/submit'
 import { Route as TrackRouteImport } from './routes/track'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminAnalyticsRouteImport } from './routes/admin.analytics'
 import { Route as AdminKnowledgeRouteImport } from './routes/admin.knowledge'
 import { Route as AdminVerificationRouteImport } from './routes/admin.verification'
 import { Route as AdminCasesCaseIdRouteImport } from './routes/admin.cases.$caseId'
@@ -61,6 +62,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminAnalyticsRoute = AdminAnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminKnowledgeRoute = AdminKnowledgeRouteImport.update({
   id: '/knowledge',
   path: '/knowledge',
@@ -85,6 +91,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/knowledge': typeof AdminKnowledgeRoute
   '/admin/verification': typeof AdminVerificationRoute
   '/admin/': typeof AdminIndexRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/knowledge': typeof AdminKnowledgeRoute
   '/admin/verification': typeof AdminVerificationRoute
   '/admin': typeof AdminIndexRoute
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/submit': typeof SubmitRoute
   '/track': typeof TrackRoute
+  '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/knowledge': typeof AdminKnowledgeRoute
   '/admin/verification': typeof AdminVerificationRoute
   '/admin/': typeof AdminIndexRoute
@@ -126,6 +135,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/submit'
     | '/track'
+    | '/admin/analytics'
     | '/admin/knowledge'
     | '/admin/verification'
     | '/admin/'
@@ -138,6 +148,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/submit'
     | '/track'
+    | '/admin/analytics'
     | '/admin/knowledge'
     | '/admin/verification'
     | '/admin'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/submit'
     | '/track'
+    | '/admin/analytics'
     | '/admin/knowledge'
     | '/admin/verification'
     | '/admin/'
@@ -225,6 +237,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/analytics': {
+      id: '/admin/analytics'
+      path: '/analytics'
+      fullPath: '/admin/analytics'
+      preLoaderRoute: typeof AdminAnalyticsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/knowledge': {
       id: '/admin/knowledge'
       path: '/knowledge'
@@ -250,6 +269,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AdminRouteChildren {
+  AdminAnalyticsRoute: typeof AdminAnalyticsRoute
   AdminKnowledgeRoute: typeof AdminKnowledgeRoute
   AdminVerificationRoute: typeof AdminVerificationRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -257,6 +277,7 @@ interface AdminRouteChildren {
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
+  AdminAnalyticsRoute: AdminAnalyticsRoute,
   AdminKnowledgeRoute: AdminKnowledgeRoute,
   AdminVerificationRoute: AdminVerificationRoute,
   AdminIndexRoute: AdminIndexRoute,

@@ -3,6 +3,8 @@ Runs the classifier against a labeled test set and reports accuracy metrics.
 Re-run this anytime you change the classifier prompt or logic to check
 whether you improved or regressed accuracy.
 """
+from numpy import rint
+
 from classifier import classify_complaint
 from eval_data import TEST_CASES
 import json
@@ -22,6 +24,7 @@ def run_evaluation():
     urgency_correct = 0
     urgency_scored = 0
     failures = []
+    urgency_mismatches = []
 
     case_number = 0
     total_all = len(TEST_CASES)
@@ -54,7 +57,15 @@ def run_evaluation():
             urgency_correct += urgency_match
 
         status = "PASS" if (cat_match and dept_match) else "FAIL"
-        print(status)
+        urgency_note = ""
+        if case["expected_urgency"] is not None and not urgency_match:
+            urgency_note = f" (urgency mismatch: expected={case['expected_urgency']}, got={result['urgency']})"
+            urgency_mismatches.append({
+                "text": case["text"],
+                "expected_urgency": case["expected_urgency"],
+                "actual_urgency": result["urgency"],
+            })
+        print(status + urgency_note)
 
         if not cat_match or not dept_match:
             failures.append({
@@ -82,7 +93,10 @@ def run_evaluation():
     print(f"Department accuracy:     {department_correct}/{total} ({department_correct/total*100:.1f}%)")
     if urgency_scored > 0:
         print(f"Urgency accuracy:        {urgency_correct}/{urgency_scored} ({urgency_correct/urgency_scored*100:.1f}%) [scored cases only]")
-
+        if urgency_mismatches:
+            print(f"\n--- {len(urgency_mismatches)} URGENCY MISMATCH(ES) (category/dept still correct) ---")
+            for u in urgency_mismatches:
+                print(json.dumps(u, indent=2))
     if failures:
         print(f"\n--- {len(failures)} FAILURE(S) / CRASH(ES) ---")
         for f in failures:

@@ -1,7 +1,6 @@
 """
 Orchestrates the waste-image flow: classify the image, decide whether to
 escalate to authorities or provide disposal guidance, and route accordingly.
-
 This is the waste-domain equivalent of pipeline.py's process_complaint().
 """
 
@@ -22,19 +21,10 @@ def process_waste_image(
     prior_reports_at_location: int = 0,
 ) -> dict:
     """
-    Process a waste image and determine the appropriate action.
-
-    location:
-        {"lat": float, "lng": float}
-        or
-        {"address": str}
-        or None
-
-    prior_reports_at_location:
-        Number of previous reports at the same location.
-        Supplied by the backend if available.
+    location: {"lat": float, "lng": float} or {"address": str}, or None
+    prior_reports_at_location: count of previous reports at this exact
+        location, supplied by the backend if available. 0 if unknown/none.
     """
-
     result = {
         "image_usable": None,
         "unusable_reason": None,
@@ -43,8 +33,10 @@ def process_waste_image(
         "severity": None,
         "severity_confidence": None,
         "reasoning": None,
+        "follow_up_question": None,
         "source": None,
         "fallback_reason": None,
+        "environment": None,
         "location": location,
         "prior_reports_at_location": prior_reports_at_location,
         "recurring_flag": False,
@@ -79,6 +71,7 @@ def process_waste_image(
                 "follow_up_question": classification["follow_up_question"],
                 "source": classification.get("source"),
                 "fallback_reason": classification.get("fallback_reason"),
+                "environment": classification.get("environment"),
             }
         )
 
@@ -109,7 +102,7 @@ def process_waste_image(
 
         return result
 
-    # Step 3: Check confidence on waste type and severity
+    # Step 4: Check confidence on waste type and severity
     low_waste_type_conf = (
         result["waste_type_confidence"] < WASTE_CONFIDENCE_THRESHOLD
     )
@@ -192,7 +185,6 @@ if __name__ == "__main__":
         image_bytes = f.read()
 
     mime_type, _ = mimetypes.guess_type(image_path)
-
     if mime_type is None:
         mime_type = "image/jpeg"
 
@@ -203,5 +195,4 @@ if __name__ == "__main__":
         location={"lat": 17.385, "lng": 78.4867},
         prior_reports_at_location=prior_reports,
     )
-
     print(json.dumps(result, indent=2))

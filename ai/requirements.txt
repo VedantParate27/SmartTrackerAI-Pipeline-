@@ -150,3 +150,9 @@ websockets==15.0.1
 Werkzeug==3.1.8
 yarl==1.24.5
 zipp==3.23.1
+ultralytics 
+scikit-learn 
+opencv-python 
+pandas 
+joblib 
+pillow

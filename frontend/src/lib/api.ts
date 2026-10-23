@@ -70,6 +70,12 @@ export function getAuthUser(): AuthUser | null {
   }
 }
 
+export async function checkHealth(signal?: AbortSignal): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE_URL}/`, { signal })
+  if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`)
+  return res.json()
+}
+
 /* ---------- Image URL helper ---------- */
 
 export function getBackendImageUrl(
@@ -295,7 +301,34 @@ function errorMessage(status: number, body: unknown): string {
   return `API request failed (${status})`
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export class ApiError extends Error {
+  status?: number
+  detail?: string
+  constructor(message: string, status?: number, detail?: string) {
+    super(message)
+    this.status = status
+    this.detail = detail
+  }
+}
+
+export function bearer(token?: string): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+export const WASTE_TYPES = [
+  'dry',
+  'wet',
+  'e_waste',
+  'medical',
+  'hazardous',
+  'bulk',
+] as const
+export type WasteType = (typeof WASTE_TYPES)[number]
+
+export const SEVERITIES = ['small', 'medium', 'large'] as const
+export type Severity = (typeof SEVERITIES)[number]
+
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAuthToken()
   const isFormData =
     typeof FormData !== 'undefined' && init?.body instanceof FormData
@@ -525,6 +558,7 @@ export async function register(
 export function logout(): void {
   clearAuthToken()
 }
+export const registerAccount = register
 
 /* ---------- Complaint API ---------- */
 

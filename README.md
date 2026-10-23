@@ -1,63 +1,94 @@
-# SmartTracker AI
+# SmartTracker AI Pipeline
 
-Grievance handling system: complaints submitted → classified & matched
-against policy docs via RAG → draft response generated → admin approves →
-resolved.
+FastAPI + SQLite backend, TanStack Start frontend. Two terminals.
 
-## Structure
+## 1. Backend — http://localhost:8000
 
-```
-smarttracker-ai/
-├── backend/            FastAPI app (routes, db, schema)
-│   ├── main.py          5 routes: submit, process, get, admin queue, approve
-│   ├── db.py             sqlite3 connection dependency
-│   ├── ai_pipeline.py    adapter: routes call this, this calls ai/
-│   ├── schema.sql
-│   ├── seed.sql
-│   └── test_smoke.py
-├── ai/                  RAG engine (classification, retrieval, generation)
-│   ├── common.py         shared config + Gemini retry helper
-│   ├── classifier.py     Gemini: category/department/urgency/entities
-│   ├── retrieval.py      hybrid vector + BM25 search over ChromaDB
-│   ├── generator.py      Gemini: grounded, cited draft response
-│   └── pipeline.py       orchestrates the three above
-├── data/policies/       policy .txt files, ingested into ChromaDB
-├── chroma_setup.py      run once to populate ChromaDB from data/policies/
-└── requirements.txt
-```
-
-## Setup (Windows/PowerShell)
-
-```powershell
-py -m venv venv
-venv\Scripts\Activate.ps1
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-
-copy .env.example .env
-# edit .env and set GOOGLE_API_KEY
-
-cd backend
-python ..\Database\init_db.py   # if you keep a separate init script, else:
-# sqlite3 smarttracker.db < schema.sql
-# sqlite3 smarttracker.db < seed.sql
-cd ..
-
-python chroma_setup.py          # ingest policy docs into ChromaDB (one-time)
-
-cd backend
-uvicorn main:app --reload
+copy .env.example .env          # macOS/Linux: cp .env.example .env
+python create_admin.py
+uvicorn main:app --reload --port 8000
 ```
 
-## Notes / things worth double-checking
+## 2. Frontend — http://localhost:3000
 
-- **Gemini model IDs**: `classifier.py` and `generator.py` try
-  `gemini-3.6-flash` then `gemini-3.5-flash-lite`. These were carried over
-  from the original code and were not verified against Google's current
-  model list — check before relying on them.
-- **`confidence_score`**: the original AI module never emitted this field
-  even though `schema.sql` has a column for it. I added a `confidence`
-  field to the classifier's prompt/output so it flows through end-to-end.
-- Deleted as duplicates/dead weight: `smarttracker-backend/` (86MB, mostly
-  a checked-in `venv/`, no AI integration), `backend/` (SQLAlchemy + JWT
-  auth, but never called the AI pipeline at all), and the loose top-level
-  `Database/` folder and stray `.db` files (schema was duplicated 3x).
+```bash
+cd frontend
+npm install
+copy .env.example .env          # macOS/Linux: cp .env.example .env
+npm run dev
+```
+
+## 3. Use it
+
+```
+http://localhost:3000/submit         Citizen: create an account, report waste + photo -> TRK-xxxxxxxx
+http://localhost:3000/track          Citizen: status of that complaint + all your reports
+http://localhost:3000/admin          Admin: queue -> open a case -> read the photo check, decide, verify proof
+http://localhost:3000/cleaner        Cleaner: assigned tasks -> start -> upload photo proof
+http://localhost:3000/admin/events   Admin: event log, CSV exports for pm4py / DWM
+http://localhost:8000/docs           Swagger
+```
+
+Admin login created by `create_admin.py`:
+
+```
+admin@smar9cdttracker.com / admin12345
+```
+
+## Demo data (optional)
+
+```bash
+cd backend
+python seed_data.py --complaints 600 --cleaners 6 --seed 42 --simulate-triage
+python seed_data.py --wipe          # removes only seeded rows
+```
+
+## Cleaner login (dev workaround)
+
+Sign-up always creates a citizen and seeded cleaners cannot log in, so promote
+an account you registered through the UI:
+
+```bash
+cd backend
+python -c "from database import SessionLocal; from models import User; db=SessionLocal(); u=db.query(User).filter_by(email='you@example.com').one(); u.role='cleaner'; db.commit(); print('cleaner id', u.id)"
+```
+
+Sign in again at `/cleaner`. Assign tasks to that printed id from an admin case.
+
+## AI module
+
+The `ai/` folder contains the classification, retrieval, and response-generation pipeline. See `ai/README.md` for setup and integration details. It currently writes results to its own local database as a placeholder — needs to be reconciled with the backend's database before full integration.
+
+## Reset the database
+
+```bash
+cd backend
+del smarttracker.db             # macOS/Linux: rm smarttracker.db
+python create_admin.py
+```
+
+## Checks
+
+```bash
+cd frontend
+npx tsc --noEmit                # types
+npm run lint                    # eslint
+npm run build                   # production build
+```
+
+## Notes
+
+- Frontend needs the backend running; every screen reads from the API and shows
+  a loading, empty, or error state. The frontend itself seeds or mocks nothing.
+- `VITE_API_URL` (frontend/.env) must match the backend origin, and that origin
+  must appear in `SMARTTRACKER_CORS_ORIGINS` (backend/.env).
+- JWTs expire after 60 minutes; the UI offers a re-login on 401.
+- Photo checks need the AI source: set `WASTE_AI_SRC` in `backend/.env` to the
+  folder containing `waste_pipeline.py` and `cleanup_verifier.py` (`ai/src` on
+  the `waste-image-classification` branch, not merged yet). Without it every
+  photo check ends as "failed" and admins decide manually.

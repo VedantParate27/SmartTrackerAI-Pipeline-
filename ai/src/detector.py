@@ -1,4 +1,4 @@
-﻿from ultralytics import YOLO
+from ultralytics import YOLO
 import os
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "best.pt")

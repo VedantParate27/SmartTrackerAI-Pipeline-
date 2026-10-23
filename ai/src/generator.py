@@ -1,7 +1,8 @@
-from config import MODELS_TO_TRY, MAX_RETRY_CYCLES, RETRY_WAIT_SECONDS, ENV_PATH
 from google import genai
 import os
+import time
 from dotenv import load_dotenv
+from config import MODELS_TO_TRY, MAX_RETRY_CYCLES, RETRY_WAIT_SECONDS, ENV_PATH
 
 load_dotenv(dotenv_path=ENV_PATH)
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -24,15 +25,11 @@ CUSTOMER COMPLAINT:
 DRAFT RESPONSE:"""
 
 
-import time
-
 def generate_response(complaint: str, retrieved_chunks: list) -> str:
     context = "\n\n".join(
         f"[{meta['source']}]: {doc}" for doc, meta in retrieved_chunks
     )
     prompt = GEN_PROMPT.format(context=context, complaint=complaint)
-
-    models_to_try = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
     for attempt in range(MAX_RETRY_CYCLES):
         for model_name in MODELS_TO_TRY:
@@ -49,13 +46,16 @@ def generate_response(complaint: str, retrieved_chunks: list) -> str:
 
     raise RuntimeError("All models failed after retries — check API status or your quota.")
 
+
 if __name__ == "__main__":
-    from retrieval import hybrid_search
+    from retrieval import hybrid_search, rerank
 
     complaint = "my order hasn't arrived in 3 weeks, order ORD-1234"
     department = "logistics"
 
-    chunks = hybrid_search(complaint, department)
+    candidates = hybrid_search(complaint, department)
+    chunks_with_scores = rerank(complaint, candidates)
+    chunks = [(doc, meta) for doc, meta, score in chunks_with_scores]
     draft = generate_response(complaint, chunks)
 
     print("=== DRAFT RESPONSE ===\n")

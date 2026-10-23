@@ -1,4 +1,4 @@
-﻿import os
+import os
 import joblib
 import pandas as pd
 from features import featurize

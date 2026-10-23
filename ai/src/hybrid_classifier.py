@@ -1,5 +1,4 @@
 import io
-
 from PIL import Image
 from dwm_classifier import classify_with_dwm
 from waste_classifier import classify_waste_image

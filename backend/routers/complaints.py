@@ -1,12 +1,21 @@
 # routers/complaints.py
 # Handles complaint-related API endpoints for SmartTracker AI.
 # Currently implements:
-#   POST /complaints      — submit a new complaint (requires JWT login)
-#   GET  /complaints/my  — list all complaints for the logged-in user
+#   POST /complaints                          — submit a new complaint (JSON body; unchanged contract)
+#   POST /complaints/{tracking_id}/image      — upload/replace the citizen waste image (multipart)
+#   GET  /complaints/my                      — list all complaints for the logged-in user
+#   GET  /complaints/{tracking_id}           — get one complaint by tracking ID
+#   GET  /complaints/{tracking_id}/ai-analysis — latest waste-AI analysis for the complaint
+#
+# Waste-AI integration (fail-open): the HTTP request NEVER waits for the AI.
+# A pending WasteAIResult row is created immediately after the image is stored;
+# the AI runs in a background task via the subprocess adapter (ai_client.py).
+# AI failure never fails the complaint — it only marks the result row failed.
 
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 # python-jose lets us decode and verify the JWT the client sends
@@ -17,9 +26,12 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # Our own modules
 from database import get_db
-from models import Complaint, User
+from models import Complaint, Location, User, WasteAIResult
 from routers.auth import ALGORITHM, SECRET_KEY
 from schemas import ComplaintResponse, CreateComplaintRequest
+from taxonomy import compute_priority
+import image_utils
+from waste_ai_service import schedule_ai_analysis
 
 # ---------------------------------------------------------------------------
 # OAuth2 PASSWORD BEARER
@@ -55,47 +67,109 @@ def get_current_user(
     no longer exists.
     """
 
-    # We define a reusable 401 error here so we return the same response
-    # in every failure case — we don't want to hint at WHY authentication failed.
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials. Please log in again.",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # Step 1 — Extract the raw token string from the credentials object.
-    # HTTPAuthorizationCredentials has two attributes:
-    #   .scheme      → the scheme word ("Bearer") — we don't need to check this
-    #   .credentials → the actual token string after "Bearer "
     token = credentials.credentials
 
-    # Step 2 — Decode the JWT
-    # jwt.decode() checks the signature AND the expiry time automatically.
-    # If either check fails it raises a JWTError, which we catch below.
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id_str: str = payload.get("sub")  # "sub" holds the user ID as a string
         if user_id_str is None:
             raise credentials_error
-        user_id = int(user_id_str)  # convert "1" → 1
+        user_id = int(user_id_str)
     except (JWTError, ValueError):
         raise credentials_error
 
-    # Step 2 — Fetch the user from the database
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
-        # Token was valid but the account was deleted — still refuse access
         raise credentials_error
 
     return user
 
 
+def get_current_admin_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Dependency that ensures the authenticated user has the 'admin' role."""
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+    return current_user
+
+
+def get_current_cleaner_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Dependency that ensures the authenticated user has the 'cleaner' or 'admin' role."""
+    if current_user.role not in ("cleaner", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cleaner or Admin access required.",
+        )
+    return current_user
+
+
 # ---------------------------------------------------------------------------
 # ROUTER
 # ---------------------------------------------------------------------------
-# prefix="/complaints" → every route below starts with /complaints
-# tags=["complaints"]  → shown as a group on the /docs page
 router = APIRouter(prefix="/complaints", tags=["complaints"])
+
+
+# ---------------------------------------------------------------------------
+# WASTE-AI: complaint image upload + AI-analysis access helpers
+# ---------------------------------------------------------------------------
+def _latest_ai_result(db: Session, complaint: Complaint) -> Optional[WasteAIResult]:
+    """Latest WasteAIResult for a complaint (created_at DESC, id DESC tiebreak), or None."""
+    return (
+        db.query(WasteAIResult)
+        .filter(WasteAIResult.complaint_id == complaint.id)
+        .order_by(WasteAIResult.created_at.desc(), WasteAIResult.id.desc())
+        .first()
+    )
+
+
+def _latest_ai_summary(result: Optional[WasteAIResult]) -> dict:
+    """Small embedded AI summary for complaint responses (not the full 25 fields)."""
+    if result is None:
+        return {"ai_status": None}
+    return {
+        "ai_status": result.ai_status,
+        "waste_type": result.waste_type,
+        "severity": result.severity,
+        "escalate_to_authority": result.escalate_to_authority,
+        "needs_human_review": result.needs_human_review,
+        "follow_up_question": result.follow_up_question,
+    }
+
+
+def _ai_analysis_response(result: WasteAIResult) -> dict:
+    """Full single-analysis response: verbatim AI data + HTTP-reachable image URL."""
+    from schemas import WasteAIResultResponse
+
+    payload = WasteAIResultResponse.model_validate(result).model_dump(mode="json")
+    if payload.get("image_url"):
+        # image_url is stored as an application path (/uploads/...); expose the
+        # same URL here — frontend prefixes it with the API origin.
+        payload["image_url"] = payload["image_url"]
+    return payload
+
+
+def _can_view_ai_analysis(complaint: Complaint, user: User) -> bool:
+    """Owner, assigned cleaner, or admin may view the AI analysis (task 13 authz)."""
+    if user.role == "admin":
+        return True
+    if complaint.user_id == user.id:
+        return True
+    task = complaint.cleanup_task
+    if task is not None and task.assigned_cleaner_id == user.id:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -114,40 +188,231 @@ def create_complaint(
 ):
     """
     Submit a new complaint on behalf of the authenticated user.
+    Supports optional waste management classification and location fields.
 
-    The client only needs to supply:
-    - **complaint_text**: The full complaint message (required)
-    - **phone**: An optional contact phone number
-
-    Everything else (name, email, tracking ID, status, priority) is
-    set automatically by the server.
-
-    Requires a valid **JWT Bearer token** in the Authorization header.
+    `location_id` is an explicit reference to the Location where the waste was
+    found. It is optional: omitted or null keeps the legacy behaviour (a
+    location-less complaint) and is never inferred from the citizen's address,
+    coordinates, or account details. A supplied location must exist and be
+    active, otherwise the request is rejected (404 / 400).
     """
 
-    # Step 1 — Build the Complaint row
-    # We pull name and email from the authenticated user's profile so
-    # the client cannot impersonate someone else.
-    new_complaint = Complaint(
-        user_id=current_user.id,                   # link to the users table
-        name=current_user.name,                    # taken from the JWT user
-        email=current_user.email,                  # taken from the JWT user
-        phone=body.phone,                          # optional, may be None
-        complaint_text=body.complaint_text,        # the main complaint body
-        # tracking_id is generated by the model's default lambda (TRK-xxxxxxxx)
-        status="pending",                          # always starts as pending
-        priority="medium",                         # default priority
-        # department is None until an admin classifies the complaint
+    # Derive priority from structured triage inputs when provided; the fixed
+    # rule lives in taxonomy.compute_priority (auditable, comparable across
+    # historical rows for DWM experiments). Falls back to "medium".
+    derived_priority = compute_priority(
+        body.quantity_severity, body.waste_type, body.intervention_required
     )
 
-    # Step 2 — Save to the database
-    db.add(new_complaint)       # stage the new row
-    db.commit()                 # write it to the SQLite file
-    db.refresh(new_complaint)   # reload to get DB-assigned values (id, tracking_id, created_at)
+    # --- Explicit waste location (optional) -------------------------------
+    # The submitter states where the waste was ACTUALLY FOUND by referencing a
+    # Location record. Nothing is ever inferred from latitude, longitude,
+    # address_text, or the citizen's account — a location that was not stated
+    # simply stays null. A stated location must exist and still be active;
+    # inactive locations are not offered for new complaints.
+    location_id = body.location_id
+    if location_id is not None:
+        location = (
+            db.query(Location)
+            .filter(Location.id == location_id)
+            .first()
+        )
+        if location is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Location not found.",
+            )
+        if not location.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Location is not active.",
+            )
 
-    # Step 3 — Return the response
-    # FastAPI serialises new_complaint through ComplaintResponse automatically.
+    new_complaint = Complaint(
+        user_id=current_user.id,
+        name=current_user.name,
+        email=current_user.email,
+        phone=body.phone,
+        complaint_text=body.complaint_text,
+        waste_type=body.waste_type,
+        waste_context=body.waste_context,
+        quantity_severity=body.quantity_severity,
+        recommended_action=body.recommended_action,
+        intervention_required=body.intervention_required,
+        latitude=body.latitude,
+        longitude=body.longitude,
+        address_text=body.address_text,
+        location_id=location_id,
+        status="pending",
+        priority=derived_priority,
+        source="citizen",
+    )
+
+    # Lifecycle event log (lazy import avoids a module-level import cycle:
+    # routers.eventlog imports get_current_admin_user from this module).
+    # NOTE: db.flush() first so SQLAlchemy assigns tracking_id/id — column
+    # defaults are applied at flush time, not at object construction.
+    from routers.eventlog import log_event
+
+    db.add(new_complaint)
+    db.flush()
+    log_event(
+        db,
+        case_id=new_complaint.tracking_id,
+        activity="complaint_created",
+        actor_id=current_user.id,
+        actor_role="citizen",
+        new_value="pending",
+        meta={
+            "priority": derived_priority,
+            "waste_type": body.waste_type,
+            "quantity_severity": body.quantity_severity,
+            "intervention_required": body.intervention_required,
+            "location_id": location_id,
+        },
+    )
+
+    try:
+        db.commit()
+        db.refresh(new_complaint)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create complaint.",
+        )
+
     return new_complaint
+
+
+# ---------------------------------------------------------------------------
+# POST /complaints/{tracking_id}/image   (waste-AI: citizen image upload)
+# ---------------------------------------------------------------------------
+@router.post(
+    "/{tracking_id}/image",
+    response_model=ComplaintResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Upload or replace the citizen waste image for a complaint",
+)
+def upload_complaint_image(
+    tracking_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Attach/replace the waste image on a complaint and (re-)run the AI.
+
+    Least-disruptive design: the existing JSON POST /complaints contract is
+    untouched; images ride on this separate multipart endpoint. A NEW pending
+    WasteAIResult is created per upload (append-only history preserved).
+    Fail-open: AI failure never affects the complaint row or this response.
+    """
+    complaint = (
+        db.query(Complaint)
+        .filter(Complaint.tracking_id == tracking_id)
+        .first()
+    )
+    if complaint is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found.")
+
+    # Ownership: only the owner (or an admin) may attach an image.
+    if complaint.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not allowed to modify this complaint.")
+
+    # --- Read with a hard cap: never load arbitrarily large bodies ---
+    cap = image_utils.MAX_IMAGE_BYTES + 1
+    data = file.file.read(cap)
+    if len(data) > image_utils.MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=image_utils.ERR_IMAGE_TOO_LARGE)
+
+    ok, err_code = image_utils.validate_image_upload(data, file.content_type)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=err_code)
+
+    ext = image_utils.sniff_extension(data[:16])
+    image_url, mime = image_utils.store_complaint_image(data, ext)
+
+    # --- Recurrence (AI input), computed BEFORE scheduling; safe on junk ---
+    from geo import count_prior_reports_nearby_or_zero
+    prior_count = count_prior_reports_nearby_or_zero(
+        db, complaint.latitude, complaint.longitude, current_complaint_id=complaint.id
+    )
+    from geo import get_default_radius_m
+    radius_m = get_default_radius_m()
+
+    # --- Append-only pending result row (Step 1 model) ---
+    result = WasteAIResult(
+        complaint_id=complaint.id,
+        ai_status="pending",
+        image_url=image_url,
+        image_mime_type=mime,
+        prior_reports_count=prior_count,
+        radius_m=radius_m,
+    )
+    db.add(result)
+
+    # NOTE: no lifecycle event is emitted at scheduling time. The event-log
+    # vocabulary is research data (pm4py) — an event will be recorded when the
+    # AI analysis actually completes/fails or when a human decides (later step,
+    # coordinated with M4), never as a misleading pre-completion marker.
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        # Do not leave a stored image with no DB row behind it.
+        try:
+            stored = image_utils.COMPLAINT_IMAGE_DIR / image_url.rsplit("/", 1)[1]
+            stored.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to attach image.")
+    db.refresh(result)
+
+    # --- Schedule the background AI run AFTER the row is safely committed ---
+    schedule_ai_analysis(background_tasks, result.id)
+
+    db.refresh(complaint)
+    latest = _latest_ai_result(db, complaint)
+    return {**ComplaintResponse.model_validate(complaint).model_dump(mode="json"),
+            **_latest_ai_summary(latest)}
+
+
+# ---------------------------------------------------------------------------
+# GET /complaints/{tracking_id}/ai-analysis
+# ---------------------------------------------------------------------------
+@router.get(
+    "/{tracking_id}/ai-analysis",
+    status_code=status.HTTP_200_OK,
+    summary="Latest waste-AI analysis for a complaint",
+)
+def get_ai_analysis(
+    tracking_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the latest WasteAIResult (verbatim AI fields) for one complaint.
+
+    404 when the complaint does not exist OR no AI analysis exists yet —
+    nothing is fabricated. Authorization: owner, assigned cleaner, or admin.
+    """
+    complaint = (
+        db.query(Complaint)
+        .filter(Complaint.tracking_id == tracking_id)
+        .first()
+    )
+    if complaint is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found.")
+
+    if not _can_view_ai_analysis(complaint, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not allowed to view this complaint's AI analysis.")
+
+    latest = _latest_ai_result(db, complaint)
+    if latest is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No AI analysis exists for this complaint.")
+
+    return _ai_analysis_response(latest)
 
 
 # ---------------------------------------------------------------------------
@@ -166,28 +431,26 @@ def get_my_complaints(
     """
     Return every complaint that belongs to the authenticated user,
     ordered newest first.
-
-    - Returns an **empty list** (not an error) if the user has no complaints.
-    - The client cannot request another user's complaints — the user ID is
-      always taken from the JWT, never from the request.
-
-    Requires a valid **JWT Bearer token** in the Authorization header.
     """
 
-    # Query the complaints table for rows where user_id matches the
-    # authenticated user's ID, then sort newest-first.
-    #
-    # .all() executes the query and returns a plain Python list.
-    # If there are no matching rows, .all() returns [] — HTTP 200 with []
-    # is the correct response when a valid user simply has no complaints yet.
     complaints = (
         db.query(Complaint)
-        .filter(Complaint.user_id == current_user.id)   # only THIS user's complaints
-        .order_by(Complaint.created_at.desc())           # newest complaint first
+        .filter(Complaint.user_id == current_user.id)
+        .order_by(Complaint.created_at.desc())
         .all()
     )
 
-    return complaints
+    # Minimal waste-AI enrichment: embed the latest-analysis summary
+    # (ai_status + headline fields) without changing the response model shape.
+    return [
+        {
+            **ComplaintResponse.model_validate(c).model_dump(mode="json"),
+            **_latest_ai_summary(_latest_ai_result(db, c)),
+        }
+        for c in complaints
+    ]
+
+
 # ---------------------------------------------------------------------------
 # GET /complaints/{tracking_id}
 # ---------------------------------------------------------------------------
@@ -204,30 +467,36 @@ def get_complaint(
 ):
     """
     Get one complaint using its public tracking ID.
-
-    Only the user who submitted the complaint can view it.
+    Accessible by owner, cleaner assigned to the task, or admin.
     """
 
-    # Step 1 — Find the complaint
     complaint = (
         db.query(Complaint)
         .filter(Complaint.tracking_id == tracking_id)
         .first()
     )
 
-    # Step 2 — Complaint doesn't exist
     if complaint is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Complaint not found.",
         )
 
-    # Step 3 — Make sure the logged-in user owns it
-    if complaint.user_id != current_user.id:
+    is_owner = complaint.user_id == current_user.id
+    is_admin = current_user.role == "admin"
+    is_assigned_cleaner = (
+        complaint.cleanup_task is not None
+        and complaint.cleanup_task.assigned_cleaner_id == current_user.id
+    )
+
+    if not (is_owner or is_admin or is_assigned_cleaner):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not allowed to view this complaint.",
         )
 
-    # Step 4 — Return complaint
-    return complaint
+    return {
+        **ComplaintResponse.model_validate(complaint).model_dump(mode="json"),
+        **_latest_ai_summary(_latest_ai_result(db, complaint)),
+    }
+

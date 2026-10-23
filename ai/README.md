@@ -1,11 +1,7 @@
-# SmartTracker AI — AI Module
+# SmartTracker AI Module (Member 3)
 
 ## What this does
-Takes a raw customer complaint (plain text) and returns:
-- A category and department classification
-- Extracted entities (order ID, account ID, error code)
-- Relevant policy citations, retrieved via hybrid search (semantic + keyword)
-- A grounded draft response — generated using ONLY the retrieved policy text, to prevent hallucinated promises
+Takes a raw customer complaint (plain text) and returns a full triage result: classification, routing, extracted entities, retrieved policy citations, a grounded draft response, and automatic flags for anything that needs human review.
 
 ## How to call it
 ```python
@@ -22,24 +18,46 @@ result = process_complaint("my order hasn't arrived in 3 weeks, order ORD-1234")
   "department": "billing | tech_support | logistics | customer_service",
   "urgency": "low | medium | high",
   "entities": {
-    "order_id": "string or null",
+    "order_ids": ["string", "..."],
     "account_id": "string or null",
     "error_code": "string or null"
   },
-  "summary": "one-sentence summary of the complaint",
-  "retrieved_sources": ["list of policy document filenames used"],
-  "draft_response": "the full grounded draft reply as a string"
+  "summary": "one-sentence summary",
+  "confidence": 0.0,
+  "retrieved_sources": ["policy filenames used"],
+  "top_retrieval_score": 0.0,
+  "draft_response": "the grounded draft reply",
+  "citation_check": {
+    "cited": ["..."], "valid": ["..."], "invalid": ["..."], "fully_grounded": true
+  },
+  "needs_human_review": false,
+  "review_reasons": ["..."],
+  "errors": ["..."],
+  "db_id": 1
 }
 ```
 
-## Setup (for anyone running this locally)
+## Setup
 1. Python 3.11+
 2. `pip install -r requirements.txt`
-3. Create a `.env` file in the project root with: `GOOGLE_API_KEY=your_key_here`
-4. Run `python src/ingest.py` once to populate the vector database from `data/policies/`
-5. Test with `python src/pipeline.py`
+3. Create a `.env` in `ai/` with: `GOOGLE_API_KEY=your_key_here`
+4. Update paths in `src/config.py` (`PROJECT_ROOT`) to match wherever this repo lives locally
+5. Run `python src/ingest.py` once to populate the vector database from `data/policies/`
+6. Test with `python src/pipeline.py`
 
-## Important notes for integration
-- **This currently uses placeholder policy documents** in `data/policies/`. Once the real project database/policy documents are provided, they'll replace these files, and `ingest.py` will be re-run — no other code changes needed on this end.
-- **Gemini free-tier quota is 20 requests/day per model.** The pipeline automatically falls back between `gemini-3.5-flash-lite` and `gemini-3.6-flash` if one is rate-limited or unavailable, but be aware of this when testing in bulk.
-- `process_complaint()` currently makes 2 API calls per complaint (1 classification + 1 generation), so budget quota accordingly during integration testing.
+## Key files
+- `src/pipeline.py` — main entry point, `process_complaint()`
+- `src/classifier.py` — Gemini-based classification (structured output, confidence scoring)
+- `src/retrieval.py` — hybrid search (vector + BM25 + RRF) with cross-encoder reranking
+- `src/generator.py` — grounded draft response generation
+- `src/verification.py` — post-generation citation verification
+- `src/storage.py` — persists every result to `admin_review.db` (SQLite) for admin review
+- `src/config.py` — all tunable constants (models, thresholds, paths)
+- `src/evaluate.py` / `src/evaluate_retrieval.py` — accuracy evaluation scripts
+- `data/policies/` — placeholder policy documents (to be replaced with real company policies)
+
+## Integration notes
+- **This currently writes to its own local SQLite database** (`admin_review.db`) as a placeholder for admin review — this is separate from the backend's `smarttracker.db`. These likely need to be reconciled with Member 2 so results end up in one shared database instead of two.
+- **Policy documents are placeholders.** Once real policies are provided, replace files in `data/policies/` and re-run `ingest.py` — no other code changes needed.
+- **Gemini free-tier quota is 20 requests/day per model**, with automatic fallback between models. Budget accordingly during integration testing.
+- Every result includes a `needs_human_review` flag and `review_reasons` — the admin dashboard (frontend `/admin` routes) should surface these prominently.

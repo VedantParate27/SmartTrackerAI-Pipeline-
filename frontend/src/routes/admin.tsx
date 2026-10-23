@@ -67,6 +67,13 @@ function AdminLayout() {
         >
           Policy knowledge base
         </Link>
+        <Link
+          to="/admin/analytics"
+          className="nav-link shrink-0"
+          activeProps={{ className: 'nav-link is-active shrink-0' }}
+        >
+          Analytics & Estimates
+        </Link>
       </nav>
 
       <div className="mt-4">

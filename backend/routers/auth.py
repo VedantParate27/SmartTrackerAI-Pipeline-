@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 # python-jose handles JWT creation and decoding
@@ -19,7 +20,13 @@ from passlib.context import CryptContext
 # Our own modules
 from database import get_db
 from models import User
-from schemas import LoginRequest, RegisterRequest, RegisterResponse, TokenResponse
+from schemas import (
+    LoginRequest,
+    RegisterRequest,
+    RegisterResponse,
+    TokenResponse,
+    normalize_email,
+)
 
 
 # ===========================================================================
@@ -119,6 +126,25 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 # ---------------------------------------------------------------------------
+# Shared email lookup
+# ---------------------------------------------------------------------------
+def _find_user_by_email(db: Session, email: str):
+    """
+    Find a user by email address, ignoring case and surrounding whitespace.
+
+    The comparison is case-insensitive so a single mailbox can never own two
+    accounts, and so rows that were written before email normalization existed
+    (mixed case) stay reachable. The users table is small, so resolving the
+    expression instead of using the plain index costs nothing.
+    """
+    return (
+        db.query(User)
+        .filter(func.lower(func.trim(User.email)) == normalize_email(email))
+        .first()
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /auth/register
 # ---------------------------------------------------------------------------
 @router.post(
@@ -135,14 +161,20 @@ def register(
     Create a new user account.
 
     - **name**: Full name (2–100 characters)
-    - **email**: Must be a valid, unique email address
+    - **email**: Must be a valid, unique email address. It is stored trimmed
+      and lowercased, and a mailbox that already exists cannot be registered
+      again in a different spelling.
     - **password**: Minimum 8 characters (stored as a bcrypt hash, never plain text)
     - **department**: Optional — useful for staff members
     - **role**: Ignored — all public registrations are always assigned **citizen**
     """
 
-    # Step 1 — Reject duplicate email
-    existing_user = db.query(User).filter(User.email == body.email).first()
+    # Step 1 — Reject a duplicate email.
+    # The address is stored in one canonical form (trimmed, lowercased) and
+    # compared case-insensitively, so "User@Example.com" and
+    # "user@example.com" are recognised as the same mailbox.
+    email = normalize_email(body.email)
+    existing_user = _find_user_by_email(db, email)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -156,7 +188,7 @@ def register(
     # role is hardcoded to "citizen" — ignoring body.role prevents self-promotion
     new_user = User(
         name=body.name,
-        email=body.email,
+        email=email,
         password_hash=hashed,
         role="citizen",
         department=body.department,
@@ -187,7 +219,7 @@ def login(
     """
     Authenticate a user and return a signed JWT access token.
 
-    - **email**: The registered email address
+    - **email**: The registered email address (matched case-insensitively)
     - **password**: The account password
 
     On success, returns an **access_token** (JWT) and **token_type** ("bearer").
@@ -206,7 +238,10 @@ def login(
     # ------------------------------------------------------------------
     # Step 1 — Look up the user by email
     # ------------------------------------------------------------------
-    user = db.query(User).filter(User.email == body.email).first()
+    # Case-insensitive: the address is compared in its canonical form, so
+    # "USER@EXAMPLE.COM" finds the account stored as "user@example.com" and
+    # rows created before normalization existed remain reachable.
+    user = _find_user_by_email(db, body.email)
 
     # ------------------------------------------------------------------
     # Step 2 — Verify the password

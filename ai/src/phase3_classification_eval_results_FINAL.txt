@@ -1,0 +1,47 @@
+Running case 1/30... PASS
+Running case 2/30... PASS
+Running case 3/30... PASS
+Running case 4/30... PASS
+Running case 5/30... PASS
+Running case 6/30... PASS
+Running case 7/30... PASS
+Running case 8/30... PASS
+Running case 9/30... PASS
+Running case 10/30... SKIPPED (known ambiguous) — got category=refund, department=customer_service
+Running case 11/30... PASS
+Running case 12/30... PASS
+Running case 13/30... PASS
+Running case 14/30... PASS
+Running case 15/30... PASS
+Running case 16/30... PASS
+Running case 17/30... PASS (urgency mismatch: expected=high, got=medium)
+Running case 18/30... PASS
+Running case 19/30... PASS
+Running case 20/30... PASS
+Running case 21/30... SKIPPED (known ambiguous) — got category=other, department=customer_service
+Running case 22/30... PASS
+Running case 23/30... PASS
+Running case 24/30... PASS
+Running case 25/30... PASS
+Running case 26/30... PASS
+Running case 27/30... PASS
+Running case 28/30... PASS
+Running case 29/30... PASS
+Running case 30/30... SKIPPED (known ambiguous) — got category=technical, department=tech_support
+
+============================================================
+EVALUATION SUMMARY
+============================================================
+Total scored cases:      27  (+3 excluded as known-ambiguous)
+Category accuracy:       27/27 (100.0%)
+Department accuracy:     27/27 (100.0%)
+Urgency accuracy:        24/25 (96.0%) [scored cases only]
+
+--- 1 URGENCY MISMATCH(ES) (category/dept still correct) ---
+{
+  "text": "why is my invoice showing $49.99 when I signed up for the $29.99 plan",
+  "expected_urgency": "high",
+  "actual_urgency": "medium"
+}
+
+No failures — all scored cases passed category + department checks.

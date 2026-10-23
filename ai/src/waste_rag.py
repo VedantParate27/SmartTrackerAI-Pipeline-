@@ -11,14 +11,7 @@ import os
 import math
 import time
 from dotenv import load_dotenv
-from config import (
-    CHROMA_DB_PATH,
-    ENV_PATH,
-    MODELS_TO_TRY,
-    MAX_RETRY_CYCLES,
-    RETRY_WAIT_SECONDS,
-    WASTE_GUIDELINES_FOLDER,
-)
+from config import CHROMA_DB_PATH, ENV_PATH, MODELS_TO_TRY, MAX_RETRY_CYCLES, RETRY_WAIT_SECONDS
 
 load_dotenv(dotenv_path=ENV_PATH)
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -117,7 +110,7 @@ def generate_disposal_guidance(waste_type: str, chunks: list, additional_context
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "ingest":
-        ingest_waste_guidelines(WASTE_GUIDELINES_FOLDER)
+        ingest_waste_guidelines(r"C:\Users\SwakeetMali\smarttracker-ai\data\waste_guidelines")
     else:
         chunks = retrieve_guidance_chunks("wet")
         guidance = generate_disposal_guidance("wet", chunks)

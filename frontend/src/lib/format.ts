@@ -46,6 +46,12 @@ export function ageInHours(iso: string, now: string) {
   return Math.max(0, (to - from) / 3_600_000)
 }
 
+/** Seconds since a backend timestamp; 0 when it cannot be read. */
+export function secondsSince(iso: string) {
+  const time = parseServerDate(iso)?.getTime()
+  return !time || Number.isNaN(time) ? 0 : Math.max(0, (Date.now() - time) / 1000)
+}
+
 export function formatAge(iso: string, now: string) {
   const mins = Math.round(ageInHours(iso, now) * 60)
   if (mins < 60) return `${mins} min`

@@ -1680,3 +1680,38 @@ def approve_response(
         "complaint_id": complaint_id,
         "status": "resolved",
     }
+
+
+
+# ---------- admin: location & time analytics ----------
+
+@app.get("/admin/analytics/locations")
+def admin_analytics_locations(
+    current_user=Depends(get_current_user),
+):
+    require_role(current_user, "admin")
+    report_path = PROJECT_ROOT / "analytics" / "comparison_sample.json"
+    if report_path.exists():
+        return json.loads(report_path.read_text(encoding="utf-8"))
+    try:
+        from analytics.comparison import compare_locations
+        from analytics.records import generate_records
+        return compare_locations(generate_records(300))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate analytics: {exc}")
+
+
+@app.get("/admin/analytics/time-estimates")
+def admin_analytics_time_estimates(
+    current_user=Depends(get_current_user),
+):
+    require_role(current_user, "admin")
+    report_path = PROJECT_ROOT / "analytics" / "analytics_report.json"
+    if report_path.exists():
+        return json.loads(report_path.read_text(encoding="utf-8"))
+    return {
+        "generated_at": datetime.now().isoformat(),
+        "data_type": "synthetic demonstration data",
+        "total_records": 0,
+        "cleanup_time_estimates": [],
+    }

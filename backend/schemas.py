@@ -7,45 +7,64 @@
 #   2. Documentation — FastAPI reads these to generate the /docs page automatically
 #
 # This file uses Pydantic v2 syntax (installed: 2.5.x).
+#
+# Phase-3 additions: taxonomy-validated waste fields, AIDecisionRequest,
+# and admin-facing research schemas (AI output, corrections, decision state).
+#
+# Waste-AI integration (contract: branch waste-image-classification):
+# WasteAIResultResponse / CleanupProofAIFields — advisory waste-image AI
+# analysis data. AI vocabulary is exposed verbatim (wet/dry/hazardous/
+# sanitary/e_waste/mixed/none; domestic/moderate/dump_scale/none).
 
-from typing import Optional
+from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+
+from taxonomy import PRIORITIES, SEVERITIES, TRIAGE_MODES, WASTE_TYPES
+
+WasteType = Literal["dry", "wet", "e_waste", "medical", "hazardous", "bulk"]
+Severity = Literal["small", "medium", "large"]
+TriageMode = Literal["manual", "ai_assisted"]
+
+
+# ---------------------------------------------------------------------------
+# EMAIL NORMALIZATION
+# ---------------------------------------------------------------------------
+def normalize_email(value: str) -> str:
+    """
+    Canonical form of an email address: trimmed and lowercased.
+
+    Every email that enters the system is passed through this helper, so the
+    value that gets stored is exactly the value that is looked up later.
+    Lookups additionally compare case-insensitively, so accounts that were
+    created before this normalization existed (mixed-case rows) stay usable.
+
+    Lowercasing the whole address — not just the domain — is the de-facto
+    standard for consumer applications; RFC 5321 treats the local part as
+    case-sensitive, but no real mailbox distinguishes "User@" from "user@".
+    """
+    return value.strip().lower()
 
 
 # ---------------------------------------------------------------------------
 # SCHEMA 1 — RegisterRequest
 # ---------------------------------------------------------------------------
-# Shape of the JSON body a client must send to create a new account.
-#
-# Example valid request body:
-# {
-#   "name": "Ashish Kumar",
-#   "email": "ashish@example.com",
-#   "password": "secret123",
-#   "role": "citizen",
-#   "department": "Finance"
-# }
 class RegisterRequest(BaseModel):
 
-    # Full name — must be between 2 and 100 characters, cannot be blank spaces
     name: str = Field(
-        ...,                   # "..." means this field is required (no default)
+        ...,
         min_length=2,
         max_length=100,
         description="Full name of the user",
         examples=["Ashish Kumar"],
     )
 
-    # Email — Pydantic's EmailStr validates the format automatically
-    # (e.g. rejects "notanemail" or "missing@dot")
     email: EmailStr = Field(
         ...,
         description="A valid email address",
         examples=["ashish@example.com"],
     )
 
-    # Password — at least 8 characters to prevent trivially weak passwords
     password: str = Field(
         ...,
         min_length=8,
@@ -54,15 +73,12 @@ class RegisterRequest(BaseModel):
         examples=["secret123"],
     )
 
-    # Role — optional; defaults to "citizen" if the client doesn't send it
-    # Only the values listed in the validator are accepted.
     role: Optional[str] = Field(
         default="citizen",
-        description='User role: "citizen", "staff", or "admin"',
+        description='User role: "citizen", "staff", or "admin" (always stored as "citizen")',
         examples=["citizen"],
     )
 
-    # Department — optional; only relevant for staff/admin users
     department: Optional[str] = Field(
         default=None,
         max_length=100,
@@ -70,8 +86,11 @@ class RegisterRequest(BaseModel):
         examples=["Finance"],
     )
 
-    # --- Field-level validators ---
-    # These run automatically when Pydantic receives incoming data.
+    @field_validator("email")
+    @classmethod
+    def email_must_be_normalized(cls, value: str) -> str:
+        """Store the address in one canonical form (trimmed, lowercased)."""
+        return normalize_email(value)
 
     @field_validator("name")
     @classmethod
@@ -79,13 +98,13 @@ class RegisterRequest(BaseModel):
         """Reject names that are only whitespace (e.g. '   ')."""
         if not value.strip():
             raise ValueError("Name cannot be blank or whitespace only.")
-        return value.strip()   # also strip surrounding spaces before saving
+        return value.strip()
 
     @field_validator("role")
     @classmethod
     def role_must_be_valid(cls, value: Optional[str]) -> Optional[str]:
-        """Only allow the three defined roles."""
-        allowed = {"citizen", "staff", "admin"}
+        """Only allow the defined roles."""
+        allowed = {"citizen", "cleaner", "staff", "admin"}
         if value is not None and value not in allowed:
             raise ValueError(f"Role must be one of {sorted(allowed)}.")
         return value
@@ -103,13 +122,6 @@ class RegisterRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # SCHEMA 2 — LoginRequest
 # ---------------------------------------------------------------------------
-# Shape of the JSON body a client sends to log in.
-#
-# Example:
-# {
-#   "email": "ashish@example.com",
-#   "password": "secret123"
-# }
 class LoginRequest(BaseModel):
 
     email: EmailStr = Field(
@@ -120,24 +132,22 @@ class LoginRequest(BaseModel):
 
     password: str = Field(
         ...,
-        min_length=8,          # same floor as registration to give helpful errors
+        min_length=8,
         max_length=128,
         description="Account password",
         examples=["secret123"],
     )
 
+    @field_validator("email")
+    @classmethod
+    def email_must_be_normalized(cls, value: str) -> str:
+        """Look the account up in the same canonical form it was stored in."""
+        return normalize_email(value)
+
 
 # ---------------------------------------------------------------------------
 # SCHEMA 3 — TokenResponse
 # ---------------------------------------------------------------------------
-# Shape of the JSON body the server sends BACK after a successful login.
-# This is what the client stores and includes in future requests.
-#
-# Example response:
-# {
-#   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-#   "token_type": "bearer"
-# }
 class TokenResponse(BaseModel):
 
     access_token: str = Field(
@@ -154,16 +164,6 @@ class TokenResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # SCHEMA 4 — RegisterResponse
 # ---------------------------------------------------------------------------
-# Shape of the JSON body the server sends back after a successful registration.
-# We deliberately exclude the password hash — never expose it in a response.
-#
-# Example response:
-# {
-#   "id": 1,
-#   "name": "Ashish Kumar",
-#   "email": "ashish@example.com",
-#   "role": "citizen"
-# }
 class RegisterResponse(BaseModel):
 
     id: int = Field(..., description="Auto-assigned database ID of the new user")
@@ -171,37 +171,22 @@ class RegisterResponse(BaseModel):
     email: EmailStr = Field(..., description="Email that was stored")
     role: str = Field(..., description="Role assigned to the user")
 
-    # model_config tells Pydantic v2 to read data from SQLAlchemy ORM objects
-    # (not just plain dictionaries).  Without this, response_model would fail.
     model_config = {"from_attributes": True}
 
 
 # ---------------------------------------------------------------------------
 # SCHEMA 5 — CreateComplaintRequest
 # ---------------------------------------------------------------------------
-# Shape of the JSON body the client sends when submitting a new complaint.
-# Notice what is NOT here: name, email, tracking_id, status, priority.
-# Those are set automatically by the server — the client cannot influence them.
-#
-# Example valid request body:
-# {
-#   "complaint_text": "The streetlight on Main St has been broken for two weeks.",
-#   "phone": "9876543210"
-# }
 class CreateComplaintRequest(BaseModel):
 
-    # The full complaint message — must be at least 10 characters so we don't
-    # accept accidental one-word submissions.
     complaint_text: str = Field(
-        ...,                   # required field
+        ...,
         min_length=10,
         max_length=5000,
         description="The full text of the complaint (10–5000 characters)",
-        examples=["The streetlight on Main St has been broken for two weeks."],
+        examples=["There is an accumulation of e-waste near the community center."],
     )
 
-    # Optional phone number — no format enforcement here; different countries
-    # use different formats. We store whatever the user provides.
     phone: Optional[str] = Field(
         default=None,
         max_length=20,
@@ -209,31 +194,42 @@ class CreateComplaintRequest(BaseModel):
         examples=["9876543210"],
     )
 
-    # --- Field-level validator ---
+    # Waste Management Fields — validated against the research taxonomy.
+    waste_type: Optional[WasteType] = Field(default=None, description="Type of waste (dry, wet, e_waste, medical, hazardous, bulk)")
+    waste_context: Optional[str] = Field(default=None, max_length=2000, description="Waste context or environment description")
+    quantity_severity: Optional[Severity] = Field(default=None, description="Quantity or severity level (small, medium, large)")
+    recommended_action: Optional[str] = Field(default=None, max_length=2000, description="Disposal guidance or cleaner instructions")
+    intervention_required: Optional[bool] = Field(default=False, description="Whether cleaner intervention is required")
+
+    # Location Fields
+    latitude: Optional[float] = Field(default=None, description="Latitude coordinate")
+    longitude: Optional[float] = Field(default=None, description="Longitude coordinate")
+    address_text: Optional[str] = Field(default=None, max_length=255, description="Human-readable location address/landmark")
+
+    # Explicit location reference (optional, nullable).
+    # Points at the Location record where the waste was ACTUALLY FOUND —
+    # NOT at the citizen's residence or registered address. Omitting it (or
+    # sending null) keeps the legacy behaviour: the complaint simply carries
+    # no location. The value is never inferred from latitude/longitude/
+    # address_text; the API validates it against the locations table.
+    location_id: Optional[int] = Field(
+        default=None,
+        description="ID of the Location where the waste was found (null = not recorded)",
+        examples=[1],
+    )
+
     @field_validator("complaint_text")
     @classmethod
     def complaint_text_must_not_be_blank(cls, value: str) -> str:
         """Reject complaint text that is only whitespace."""
         if not value.strip():
             raise ValueError("Complaint text cannot be blank or whitespace only.")
-        return value.strip()   # strip surrounding spaces before saving
+        return value.strip()
 
 
 # ---------------------------------------------------------------------------
 # SCHEMA 6 — ComplaintResponse
 # ---------------------------------------------------------------------------
-# Shape of the JSON body the server sends BACK after a complaint is created.
-# We only expose the fields the client needs — internal DB IDs are omitted.
-#
-# Example response:
-# {
-#   "tracking_id": "TRK-a3f8b2c1",
-#   "complaint_text": "The streetlight on Main St has been broken for two weeks.",
-#   "status": "pending",
-#   "priority": "medium",
-#   "department": null,
-#   "created_at": "2025-01-15T10:30:00+00:00"
-# }
 class ComplaintResponse(BaseModel):
 
     tracking_id: str = Field(
@@ -253,66 +249,78 @@ class ComplaintResponse(BaseModel):
 
     priority: str = Field(
         ...,
-        description='Priority level assigned to the complaint (e.g. "medium")',
+        description="Priority level derived from severity/waste type (low/medium/high/urgent)",
     )
 
-    # department may be None until an admin classifies the complaint
     department: Optional[str] = Field(
         default=None,
         description="Department assigned to handle the complaint (may be null initially)",
     )
+
+    waste_type: Optional[str] = Field(default=None, description="Type of waste")
+    waste_context: Optional[str] = Field(default=None, description="Waste context")
+    quantity_severity: Optional[str] = Field(default=None, description="Quantity/severity")
+    recommended_action: Optional[str] = Field(default=None, description="Recommended action")
+    intervention_required: Optional[bool] = Field(default=False, description="Intervention required flag")
+
+    latitude: Optional[float] = Field(default=None, description="Latitude coordinate")
+    longitude: Optional[float] = Field(default=None, description="Longitude coordinate")
+    address_text: Optional[str] = Field(default=None, description="Location text")
+
+    # Location where the waste was actually found.
+    # null for legacy complaints and for submissions that stated no location.
+    location_id: Optional[int] = Field(
+        default=None,
+        description="ID of the Location where the waste was found (null = not recorded)",
+    )
+
+    # Research fields (surfaced for admin UI + frontend work)
+    triage_mode: Optional[TriageMode] = Field(default=None, description="manual | ai_assisted | null (not yet triaged)")
+    review_required: Optional[bool] = Field(default=False, description="Whether mandatory human review is pending")
+    review_reason: Optional[str] = Field(default=None, description="Why review was required (low_confidence | hazardous_waste | missing_prediction)")
+    resolved_at: Optional[str] = Field(default=None, description="ISO 8601 timestamp when the complaint was resolved")
+    source: str = Field(default="citizen", description="Origin of the complaint: citizen (real) | seed (synthetic research data)")
+
+    # Waste-AI integration: status of the latest waste-image AI analysis
+    # (pending | completed | failed | null = no analysis ever ran).
+    # Full AI data is served by GET /complaints/{tracking_id}/ai-analysis.
+    ai_status: Optional[str] = Field(default=None, description="Latest waste-AI analysis status: pending | completed | failed | null")
 
     created_at: str = Field(
         ...,
         description="ISO 8601 timestamp of when the complaint was created",
     )
 
-    # model_config tells Pydantic v2 to read values directly from SQLAlchemy
-    # ORM model attributes rather than from a plain dict.
     model_config = {"from_attributes": True}
 
-    # We convert created_at (a datetime object from the DB) to an ISO 8601 string
-    # so the response is always a consistent, human-readable format.
-    @field_validator("created_at", mode="before")
+    @field_validator("created_at", "resolved_at", mode="before")
     @classmethod
     def serialise_datetime(cls, value):
         """Convert datetime → ISO 8601 string if it isn't already a string."""
-        if hasattr(value, "isoformat"):   # it's a datetime object
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
             return value.isoformat()
-        return str(value)                 # already a string, pass through
+        return str(value)
 
 
 # ---------------------------------------------------------------------------
 # SCHEMA 7 — AdminComplaintUpdateRequest
 # ---------------------------------------------------------------------------
-# Shape of the JSON body an admin sends to update a complaint.
-# All three fields are optional so the admin can update any subset.
-# At least ONE field must be provided (enforced by the validator below).
-#
-# Example — update only the status:
-# { "status": "in_progress" }
-#
-# Example — update all three:
-# { "status": "resolved", "priority": "high", "department": "Public Works" }
 class AdminComplaintUpdateRequest(BaseModel):
 
-    # New status — e.g. "pending", "in_progress", "resolved", "closed"
-    status: Optional[str] = Field(
+    status: Optional[Literal["pending", "in_progress", "resolved", "closed"]] = Field(
         default=None,
-        max_length=30,
-        description='New status value (e.g. "in_progress", "resolved", "closed")',
+        description='New status value ("pending", "in_progress", "resolved", "closed")',
         examples=["in_progress"],
     )
 
-    # New priority — e.g. "low", "medium", "high", "urgent"
-    priority: Optional[str] = Field(
+    priority: Optional[Literal["low", "medium", "high", "urgent"]] = Field(
         default=None,
-        max_length=20,
-        description='New priority level (e.g. "low", "medium", "high", "urgent")',
+        description='New priority level ("low", "medium", "high", "urgent")',
         examples=["high"],
     )
 
-    # Department responsible for handling the complaint
     department: Optional[str] = Field(
         default=None,
         max_length=100,
@@ -320,16 +328,868 @@ class AdminComplaintUpdateRequest(BaseModel):
         examples=["Public Works"],
     )
 
-    # --- Model-level validator ---
-    # Runs after all individual fields are validated.
-    # Ensures the admin sends at least one field to change.
-    from pydantic import model_validator
+    @field_validator("department")
+    @classmethod
+    def department_must_not_be_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped if stripped else None
 
     @model_validator(mode="after")
     def at_least_one_field_required(self) -> "AdminComplaintUpdateRequest":
-        """Reject a request body where every field is None (nothing to update)."""
         if self.status is None and self.priority is None and self.department is None:
             raise ValueError(
                 "At least one field (status, priority, or department) must be provided."
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 8 — AdminQueueItem
+# ---------------------------------------------------------------------------
+class AdminQueueItem(BaseModel):
+
+    id: str = Field(..., alias="tracking_id", description="Public tracking reference")
+    requester_name: str = Field(..., alias="name", description="Name of the complainant")
+    contact: str = Field(..., alias="email", description="Contact email of the complainant")
+    text: str = Field(..., alias="complaint_text", description="Full complaint text")
+
+    status: str = Field(..., description="Current complaint status")
+    priority: str = Field(..., description="Priority level, title-cased")
+    language: str = Field(..., description="Language of the complaint")
+
+    submitted_at: str = Field(
+        ...,
+        alias="created_at",
+        description="ISO 8601 timestamp of when the complaint was submitted",
+    )
+    updated_at: str = Field(
+        ...,
+        description="ISO 8601 timestamp of the last update",
+    )
+
+    assigned_department: Optional[str] = Field(
+        default=None,
+        alias="department",
+        description="Department assigned to handle the complaint (may be null)",
+    )
+
+    waste_type: Optional[str] = Field(default=None, description="Waste type")
+    waste_context: Optional[str] = Field(default=None, description="Waste context")
+    quantity_severity: Optional[str] = Field(default=None, description="Quantity/severity")
+    recommended_action: Optional[str] = Field(default=None, description="Recommended action")
+    intervention_required: Optional[bool] = Field(default=False, description="Intervention required flag")
+    latitude: Optional[float] = Field(default=None, description="Latitude")
+    longitude: Optional[float] = Field(default=None, description="Longitude")
+    address_text: Optional[str] = Field(default=None, description="Address text")
+
+    # Research fields for the admin AI panel (Phase 3)
+    triage_mode: Optional[TriageMode] = Field(default=None, description="manual | ai_assisted | null")
+    review_required: Optional[bool] = Field(default=False, description="Mandatory review pending")
+    review_reason: Optional[str] = Field(default=None, description="Escalation reason")
+
+    channel: str = Field(
+        default="Backend",
+        description="Submission channel",
+    )
+
+    classification: Optional[dict] = Field(default=None)
+    entities: List[dict] = Field(default_factory=list)
+    evidence: List[dict] = Field(default_factory=list)
+    ai_draft: Optional[dict] = Field(default=None)
+    edited_draft: Optional[str] = Field(default=None)
+    resolution: Optional[dict] = Field(default=None)
+    closure_reason: Optional[str] = Field(default=None)
+    duplicate_of: Optional[str] = Field(default=None)
+    comments: List[dict] = Field(default_factory=list)
+    audit: List[dict] = Field(default_factory=list)
+    attachments: List[dict] = Field(default_factory=list)
+
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True,
+    }
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def title_case_priority(cls, value: str) -> str:
+        return value.title() if isinstance(value, str) else value
+
+    @field_validator("submitted_at", "updated_at", mode="before")
+    @classmethod
+    def serialise_timestamps(cls, value) -> str:
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 9 — ApproveResponseRequest & Result
+# ---------------------------------------------------------------------------
+class ApproveResponseRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    next_status: Literal["in_progress", "resolved"] = Field(...)
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Text must not be blank")
+        return value
+
+class ApproveResponseResult(BaseModel):
+    tracking_id: str
+    response_text: str
+    approved_by: str
+    approved_at: str
+    status: str
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 10 — CLEANER & TASK SCHEMAS
+# ---------------------------------------------------------------------------
+class AssignCleanerRequest(BaseModel):
+    cleaner_id: int = Field(..., description="ID of the cleaner user to assign")
+    notes: Optional[str] = Field(default=None, description="Optional notes or instructions for cleaner")
+
+class AssignCleanerResponse(BaseModel):
+    task_id: str
+    tracking_id: str
+    assigned_cleaner_id: Optional[int]
+    cleaner_name: Optional[str]
+    status: str
+    assigned_at: str
+
+class CleanupProofResponse(BaseModel):
+    id: int
+    task_id: int
+    image_url: str
+    uploaded_by: int
+    uploaded_at: str
+    verification_status: str
+    verified_by: Optional[int] = None
+    verified_at: Optional[str] = None
+    rejection_reason: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("uploaded_at", "verified_at", mode="before")
+    @classmethod
+    def serialise_proof_timestamps(cls, value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+class CleanerTaskResponse(BaseModel):
+    task_id: str
+    tracking_id: str
+    status: str
+    assigned_at: str
+    started_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the cleaner genuinely started the work. Recorded once on the "
+            "first start request and never reset. null when the task was never "
+            "explicitly started."
+        ),
+    )
+    completed_at: Optional[str] = None
+    first_proof_uploaded_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the first proof was uploaded for this task (derived from the "
+            "append-only proof history). A proxy for the end of the cleaning "
+            "work — NOT a verified physical finish time. null until a proof "
+            "has been uploaded."
+        ),
+    )
+    notes: Optional[str] = None
+    complaint_text: str
+    waste_type: Optional[str] = None
+    quantity_severity: Optional[str] = None
+    recommended_action: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address_text: Optional[str] = None
+    proofs: List[CleanupProofResponse] = []
+
+    model_config = {"from_attributes": True}
+
+    @field_validator(
+        "assigned_at", "started_at", "completed_at", "first_proof_uploaded_at",
+        mode="before",
+    )
+    @classmethod
+    def serialise_task_timestamps(cls, value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+class VerifyProofRequest(BaseModel):
+    approved: bool = Field(..., description="True if verified, False if rejected")
+    rejection_reason: Optional[str] = Field(default=None, description="Reason if proof is rejected")
+    next_status: Optional[Literal["resolved", "closed"]] = Field(default="resolved", description="Next complaint status if approved")
+
+class VerifyProofResult(BaseModel):
+    proof_id: int
+    task_id: str
+    tracking_id: str
+    verification_status: str
+    task_status: str
+    complaint_status: str
+    verified_at: str
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 11 — HUMAN-IN-THE-LOOP AI DECISION  (NEW, Phase 3)
+# ---------------------------------------------------------------------------
+class AICorrectionItem(BaseModel):
+    field_name: str
+    ai_value: Optional[str] = Field(default=None, description="What the AI predicted (as string); omit if the field had no AI output")
+    admin_value: Optional[str] = Field(default=None, description="What the human decided (as string)")
+
+
+class AIDecisionRequest(BaseModel):
+    """Admin accept/correct of the AI suggestion + the dispatch/guidance decision.
+
+    corrections: only fields the human CHANGED (field_name, ai_value, admin_value).
+    Accepted fields may be passed with ai_value == admin_value to record
+    acceptance evidence; both are stored and distinguishable.
+    """
+
+    waste_type: WasteType
+    quantity_severity: Severity
+    intervention_required: bool
+    decision: Literal["dispatch", "guidance"] = Field(..., description="Dispatch a cleaner OR resolve with self-disposal guidance")
+    guidance_text: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=5000,
+        description="Required when decision=guidance; the disposal advice sent to the citizen",
+    )
+    notes: Optional[str] = Field(default=None, max_length=2000, description="Optional admin notes")
+    corrections: List[AICorrectionItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "AIDecisionRequest":
+        if self.decision == "guidance" and not (self.guidance_text or "").strip():
+            raise ValueError("guidance_text is required when decision is 'guidance'.")
+        if self.decision == "guidance" and self.intervention_required:
+            raise ValueError("intervention_required must be false when choosing self-disposal guidance.")
+        allowed_fields = {"waste_type", "quantity_severity", "intervention_required"}
+        for correction in self.corrections:
+            if correction.field_name not in allowed_fields:
+                raise ValueError(f"corrections.field_name must be one of {sorted(allowed_fields)}")
+        return self
+
+
+class AICorrectionResponse(BaseModel):
+    id: int
+    complaint_id: int
+    field_name: str
+    ai_value: Optional[str]
+    admin_value: Optional[str]
+    admin_id: int
+    created_at: str
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def serialise_created_at(cls, value):
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+class AIDecisionResponse(BaseModel):
+    """Result of POST /admin/complaints/{id}/ai-decision."""
+
+    tracking_id: str
+    triage_mode: TriageMode
+    review_completed: bool
+    decision: str                      # dispatch | guidance
+    waste_type: Optional[str]
+    quantity_severity: Optional[str]
+    intervention_required: bool
+    priority: str
+    status: str                        # in_progress (dispatch) | resolved (guidance)
+    task_id: Optional[str] = None      # TSK id when decision=dispatch
+    corrections_recorded: int          # fields where human != AI (true corrections)
+    acceptance_rate_fields: int        # fields with AI output that were accepted
+    resolved_at: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 12 — WASTE-AI ANALYSIS RESULT  (NEW, waste-AI integration)
+# ---------------------------------------------------------------------------
+# One row = one process_waste_image() attempt (append-only history per
+# complaint). AI vocabulary is stored and returned VERBATIM — the backend
+# does NOT remap sanitary/mixed or domestic/moderate/dump_scale.
+class WasteAIResultResponse(BaseModel):
+    """Advisory waste-image AI analysis for one complaint."""
+
+    id: int = Field(..., description="Database ID of this analysis attempt")
+    complaint_id: int = Field(..., description="Internal complaint ID the analysis belongs to")
+    created_at: str = Field(..., description="ISO 8601 timestamp of the analysis attempt")
+
+    ai_status: str = Field(
+        ...,
+        description='Processing state: "pending" | "completed" | "failed"',
+    )
+
+    image_url: Optional[str] = Field(default=None, description="URL of the analyzed image")
+    image_mime_type: Optional[str] = Field(default=None, description="MIME type of the analyzed image")
+
+    image_usable: Optional[bool] = Field(
+        default=None,
+        description="Whether the AI deemed the image usable for classification",
+    )
+    unusable_reason: Optional[str] = Field(
+        default=None,
+        description="Why the image was rejected (blurry, no waste, non-photo)",
+    )
+
+    # AI vocabulary verbatim: wet | dry | hazardous | sanitary | e_waste | mixed | none
+    waste_type: Optional[str] = Field(
+        default=None,
+        description="AI waste type (verbatim AI vocabulary, not remapped)",
+    )
+    waste_type_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="AI confidence for the waste type (0.0-1.0)",
+    )
+
+    # AI vocabulary verbatim: domestic | moderate | dump_scale | none
+    severity: Optional[str] = Field(
+        default=None,
+        description="AI severity/scale judgment (verbatim AI vocabulary, not remapped)",
+    )
+    severity_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="AI confidence for the severity (0.0-1.0)",
+    )
+
+    reasoning: Optional[str] = Field(
+        default=None,
+        description="Natural-language visual justification from the AI",
+    )
+    follow_up_question: Optional[str] = Field(
+        default=None,
+        description="Single follow-up question the AI suggests asking the citizen",
+    )
+
+    recurring_flag: Optional[bool] = Field(
+        default=None,
+        description="Whether prior reports at this location met the recurrence threshold",
+    )
+    prior_reports_count: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Number of prior reports within the radius (backend-computed)",
+    )
+    radius_m: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Radius in meters used for the recurrence count",
+    )
+
+    escalate_to_authority: Optional[bool] = Field(
+        default=None,
+        description="AI advisory escalation decision (dump_scale OR recurring)",
+    )
+
+    needs_human_review: Optional[bool] = Field(
+        default=None,
+        description="Whether the AI flagged this analysis for mandatory human review",
+    )
+    review_reasons_json: Optional[str] = Field(
+        default=None,
+        description="JSON array of human-review reasons from the AI",
+    )
+
+    disposal_guidance: Optional[str] = Field(
+        default=None,
+        description="Grounded disposal guidance (non-escalated usable cases only)",
+    )
+
+    errors_json: Optional[str] = Field(
+        default=None,
+        description="JSON array of stage errors from the AI run",
+    )
+
+    model_name: Optional[str] = Field(
+        default=None,
+        description="Model/service identifier stamped by the backend adapter",
+    )
+    model_version: Optional[str] = Field(
+        default=None,
+        description="Model/version identifier stamped by the backend adapter",
+    )
+    latency_ms: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="End-to-end AI invocation latency in milliseconds",
+    )
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def serialise_result_created_at(cls, value):
+        """Convert datetime → ISO 8601 string if it isn't already a string."""
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 12b — ADMIN AI REVIEW + DECISION  (NEW, waste-AI integration)
+# ---------------------------------------------------------------------------
+# "AI recommends, admin decides": WasteAIResult is advisory input; the admin
+# decision below is the authoritative operational choice. Decision values are
+# a separate controlled vocabulary — AI output values (waste_type="hazardous"
+# etc.) are never decision values.
+AdminDecisionValue = Literal[
+    "assign_cleaner",
+    "escalate_authority",
+    "request_information",
+    "dismiss",
+    "resolve",
+]
+
+
+class AdminDecisionRequest(BaseModel):
+    """One authoritative admin decision for a complaint."""
+
+    decision: AdminDecisionValue = Field(
+        ...,
+        description="Operational decision (independent of any AI recommendation)",
+    )
+    note: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="Optional admin note/reason (e.g. the information requested)",
+    )
+
+    @field_validator("note")
+    @classmethod
+    def note_must_not_be_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped if stripped else None
+
+
+class AdminDecisionSummary(BaseModel):
+    """One persisted admin decision (audit view)."""
+
+    id: int
+    decision: str
+    admin_id: int = Field(..., description="Admin who made the decision (decided_by)")
+    admin_name: Optional[str] = None
+    note: Optional[str] = None
+    created_at: str = Field(..., description="ISO 8601 decided_at timestamp")
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def serialise_decision_created_at(cls, value):
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+class AdminAIReviewResponse(BaseModel):
+    """Everything an admin needs to review the latest waste-AI analysis.
+
+    The nested `analysis` exposes the WasteAIResult fields verbatim
+    (pending → predictions NULL; failed → errors; completed → AI vocabulary
+    untouched). review_reasons / errors are parsed JSON lists.
+    """
+
+    complaint_id: int
+    tracking_id: str
+    complaint_status: str
+    complaint_text: str
+    waste_context: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address_text: Optional[str] = None
+    complaint_created_at: str
+
+    analysis: WasteAIResultResponse
+    review_reasons: Optional[List[Any]] = Field(
+        default=None,
+        description="Human-review reasons from the AI (parsed from review_reasons_json)",
+    )
+    errors: Optional[List[Any]] = Field(
+        default=None,
+        description="AI-run errors (parsed from errors_json); never a stack trace",
+    )
+
+    latest_decision: Optional[AdminDecisionSummary] = Field(
+        default=None,
+        description="Most recent admin decision on this complaint, if any",
+    )
+
+
+class CleanupTaskHandoff(BaseModel):
+    """CleanupTask state after an assign_cleaner decision (handoff only)."""
+
+    task_id: str
+    status: str
+    assigned_cleaner_id: Optional[int] = None
+
+
+class AdminDecisionResult(BaseModel):
+    """Result of PUT /admin/complaints/{id}/decision."""
+
+    complaint_id: int
+    tracking_id: str
+    decision: str
+    note: Optional[str] = None
+    decided_by: int = Field(..., description="Admin user ID who made the decision")
+    decided_by_name: str
+    decided_at: str = Field(..., description="ISO 8601 decision timestamp")
+    complaint_status: str
+    cleanup_task: Optional[CleanupTaskHandoff] = Field(
+        default=None,
+        description="Cleanup task created/reused by an assign_cleaner decision",
+    )
+    ai_status: Optional[str] = Field(
+        default=None,
+        description=(
+            "Status of the latest waste-AI analysis at decision time "
+            "(context only — never treated as a completed recommendation when pending/failed)"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 13 — CLEANUP-PROOF AI VERIFICATION FIELDS  (NEW, waste-AI integration)
+# ---------------------------------------------------------------------------
+class CleanupProofAIFields(BaseModel):
+    """Advisory verify_cleanup() result stored on a cleanup proof.
+
+    These fields NEVER approve or reject a proof — the human verification
+    workflow (verification_status / verified_by / verified_at) stays the
+    single source of truth. All fields are nullable: proofs uploaded while
+    the AI is unavailable or without a complaint "before" image simply
+    have no AI data.
+    """
+
+    before_image_url: Optional[str] = Field(
+        default=None,
+        description="Complaint image used as the BEFORE reference for comparison",
+    )
+    ai_after_image_usable: Optional[bool] = Field(
+        default=None,
+        description="Whether the AI deemed the AFTER image usable for comparison",
+    )
+    ai_unusable_reason: Optional[str] = Field(
+        default=None,
+        description="Why the AFTER image was rejected for comparison",
+    )
+    ai_cleanup_appears_complete: Optional[bool] = Field(
+        default=None,
+        description="AI judgment that the waste in the BEFORE image is gone",
+    )
+    ai_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="AI confidence in the cleanup comparison (0.0-1.0)",
+    )
+    ai_reasoning: Optional[str] = Field(
+        default=None,
+        description="Natural-language before/after comparison reasoning from the AI",
+    )
+    ai_admin_review_recommended: Optional[bool] = Field(
+        default=None,
+        description="AI recommendation for the admin to scrutinize this proof",
+    )
+    ai_processed_at: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 timestamp of the AI verification run",
+    )
+    ai_errors_json: Optional[str] = Field(
+        default=None,
+        description="JSON array of AI invocation errors, if any",
+    )
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+    @field_validator("ai_processed_at", mode="before")
+    @classmethod
+    def serialise_ai_processed_at(cls, value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 13b — ADMIN CLEANUP-PROOF REVIEW  (NEW, waste-AI integration)
+# ---------------------------------------------------------------------------
+class ProofReviewItem(BaseModel):
+    """One CleanupProof as seen in the admin review (AI fields advisory)."""
+
+    id: int
+    image_url: str
+    before_image_url: Optional[str] = None
+    uploaded_by: int
+    uploaded_at: str
+    verification_status: str
+    verified_by: Optional[int] = None
+    verified_at: Optional[str] = None
+    rejection_reason: Optional[str] = None
+
+    # Advisory AI verification data (never the admin decision):
+    ai_after_image_usable: Optional[bool] = None
+    ai_unusable_reason: Optional[str] = None
+    ai_cleanup_appears_complete: Optional[bool] = None
+    ai_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    ai_reasoning: Optional[str] = None
+    ai_admin_review_recommended: Optional[bool] = None
+    ai_processed_at: Optional[str] = None
+    ai_errors: Optional[List[Any]] = Field(
+        default=None,
+        description="AI invocation errors (parsed from ai_errors_json); never a stack trace",
+    )
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": (),
+    }
+
+    @field_validator("uploaded_at", "verified_at", "ai_processed_at", mode="before")
+    @classmethod
+    def serialise_proof_review_timestamps(cls, value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+class AdminProofReviewResponse(BaseModel):
+    """Admin review view: complaint + task + full proof history for one task."""
+
+    task_id: str
+    task_status: str
+    task_assigned_cleaner_id: Optional[int] = None
+    assigned_at: str
+    started_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the cleaner genuinely started the work (recorded once, never "
+            "reset). null when the task was never explicitly started."
+        ),
+    )
+    completed_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "Admin-verification timestamp — NOT the physical end of the "
+            "cleaning work."
+        ),
+    )
+    first_proof_uploaded_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the first proof was uploaded for this task (derived from the "
+            "append-only proof history). A proxy for the end of the cleaning "
+            "work — NOT a verified physical finish time."
+        ),
+    )
+
+    complaint_id: int
+    tracking_id: str
+    complaint_text: str
+    complaint_status: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    address_text: Optional[str] = None
+
+    proofs: List[ProofReviewItem] = Field(
+        default_factory=list,
+        description="All proof attempts, oldest first (history is append-only)",
+    )
+
+    model_config = {"from_attributes": True}
+
+    @field_validator(
+        "assigned_at", "started_at", "completed_at", "first_proof_uploaded_at",
+        mode="before",
+    )
+    @classmethod
+    def serialise_task_review_timestamps(cls, value):
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 14 — LOCATION MANAGEMENT  (Tasks 1 & 2)
+# ---------------------------------------------------------------------------
+
+class LocationCreateRequest(BaseModel):
+    """Admin: create a new location."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Human-readable location name (e.g. 'Dadar West')",
+        examples=["Dadar West"],
+    )
+    slug: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        description="URL-safe identifier (lowercase, hyphens only, e.g. 'dadar-west')",
+        examples=["dadar-west"],
+    )
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Name cannot be blank or whitespace only.")
+        return stripped
+
+
+class LocationUpdateRequest(BaseModel):
+    """Admin: update name and/or is_active for an existing location."""
+
+    name: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="New human-readable name (optional)",
+    )
+    is_active: Optional[bool] = Field(
+        default=None,
+        description="Set to false to deactivate; true to re-activate (optional)",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def name_must_not_be_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped if stripped else None
+
+    @field_validator("is_active", mode="before")
+    @classmethod
+    def at_least_one_field(cls, value):
+        return value  # model_validator below does the real check
+
+    @model_validator(mode="after")
+    def require_at_least_one(self) -> "LocationUpdateRequest":
+        if self.name is None and self.is_active is None:
+            raise ValueError("At least one field (name or is_active) must be provided.")
+        return self
+
+
+class LocationResponse(BaseModel):
+    """A location record as returned by the API."""
+
+    id: int
+    name: str
+    slug: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def serialise_location_timestamps(cls, value):
+        if value is None:
+            return ""
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+        return str(value)
+
+
+class SetComplaintLocationRequest(BaseModel):
+    """Admin: associate (or clear) a location_id on an existing complaint.
+
+    Pass location_id=null to un-link the location.
+    This endpoint never infers a location from coordinates or address text.
+    """
+
+    location_id: Optional[int] = Field(
+        default=...,
+        description="Location ID to assign, or null to clear the location link",
+    )
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 15 — LOCATION-WISE STATISTICS  (Tasks 3 & 5)
+# ---------------------------------------------------------------------------
+
+class LocationStats(BaseModel):
+    """Location-wise operational statistics for a single location.
+
+    Counting rules (join-safe — each count comes from its own grouped query,
+    so several proof rows for one task can never multiply a task count):
+
+    - complaints_reported: distinct complaints linked to this location.
+      Complaints without a location are never attributed to any location.
+    - tasks_assigned: distinct cleanup tasks with a non-null assigned cleaner.
+    - tasks_verified: distinct tasks with status='verified' AND a non-null
+      completed_at (the admin-verification timestamp).
+    - proofs_submitted: distinct proof records, whatever their state.
+    - proofs_verified: distinct proof records carrying authoritative HUMAN
+      verification evidence — verification_status='verified' AND verified_by
+      IS NOT NULL AND verified_at IS NOT NULL. A submitted-but-unverified
+      proof never counts, and neither does a row flagged 'verified' without a
+      human verifier (e.g. system-seeded research data).
+
+    A resolved/closed complaint is never counted as proof of physical
+    collection, and no weight, volume or tonnage is reported — those values
+    are not measured anywhere in this system.
+    """
+
+    location_id: int
+    location_name: str
+    location_slug: str
+    is_active: bool
+
+    complaints_reported: int
+    tasks_assigned: int
+    tasks_verified: int
+    proofs_submitted: int
+    proofs_verified: int
+
+    # Supplementary split of complaints_reported (retained from the previous
+    # schema; open + resolved always equals complaints_reported).
+    open_complaints: int
+    resolved_complaints: int

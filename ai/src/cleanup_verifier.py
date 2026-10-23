@@ -10,13 +10,7 @@ from typing import Optional
 import os
 import time
 from dotenv import load_dotenv
-from config import (
-    MODELS_TO_TRY,
-    MAX_RETRY_CYCLES,
-    RETRY_WAIT_SECONDS,
-    ENV_PATH,
-    CLEANUP_REVIEW_THRESHOLD,
-)
+from config import MODELS_TO_TRY, MAX_RETRY_CYCLES, RETRY_WAIT_SECONDS, ENV_PATH, WASTE_CONFIDENCE_THRESHOLD
 
 load_dotenv(dotenv_path=ENV_PATH)
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -70,7 +64,7 @@ def verify_cleanup(before_image_bytes: bytes, after_image_bytes: bytes,
                 )
                 result = response.parsed.model_dump()
                 # Safety net: low confidence always forces review, regardless of the model's own flag
-                if result["confidence"] < CLEANUP_REVIEW_THRESHOLD:
+                if result["confidence"] < WASTE_CONFIDENCE_THRESHOLD:
                     result["admin_review_recommended"] = True
                 return result
             except Exception as e:

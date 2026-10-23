@@ -1,0 +1,4 @@
+image_file,label_waste_type,label_severity,label_environment
+domestic_trial.jpg,wet,domestic,open_ground
+garbage_dump_trial.jpg,mixed,dump_scale,landfill
+dog.jpeg,none,none,

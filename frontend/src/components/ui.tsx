@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { STATUS_TONE } from '#/lib/taxonomy'
 import type { Tone } from '#/lib/taxonomy'
 import { percent } from '#/lib/format'
 import type { CaseStatus, Priority } from '#/lib/types'
+import { checkHealth } from '#/lib/api'
 
 export function StatusPill({ status }: { status: CaseStatus }) {
   return (
@@ -46,43 +47,145 @@ export function ConfidenceMeter({
         <span className="kicker">{label}</span>
         <span className="text-sm font-extrabold">
           {percent(value)}{' '}
-          <span className={low ? 'text-(--warn)' : 'text-(--ok)'}>
-            {low ? '· below threshold' : '· above threshold'}
+          <span className="text-xs font-normal muted">
+            ({low ? 'below threshold' : 'confident'})
           </span>
         </span>
       </div>
       <div
         className="meter"
-        role="meter"
+        role="progressbar"
         aria-valuenow={Math.round(value * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={`${label}: ${percent(value)}, threshold ${percent(threshold)}`}
+        aria-label={label}
       >
         <div
-          className="meter-fill"
+          className="meter-bar"
           data-tone={low ? 'warn' : 'ok'}
-          style={{ width: `${Math.max(3, Math.round(value * 100))}%` }}
+          style={{ width: `${Math.min(100, Math.max(0, value * 100))}%` }}
         />
       </div>
-      <p className="hint">
-        Configured threshold: {percent(threshold)}. Cases below it go to manual
-        triage.
-      </p>
     </div>
+  )
+}
+
+const STEPS = ['submitted', 'in_progress', 'resolved'] as const
+
+export function StatusSteps({ status }: { status: string }) {
+  const norm = status.toLowerCase()
+  const value = norm === 'closed' ? 'resolved' : norm === 'assigned' || norm === 'verification' ? 'in_progress' : norm
+  const current = Math.max(0, STEPS.indexOf(value as (typeof STEPS)[number]))
+  const labels = ['Submitted', 'Being handled', 'Resolved']
+  return (
+    <ol className="steps" aria-label="Complaint progress">
+      {labels.map((text, index) => (
+        <li
+          key={text}
+          className="step"
+          data-state={
+            index < current ? 'done' : index === current ? 'current' : 'todo'
+          }
+          aria-current={index === current ? 'step' : undefined}
+        >
+          <span className="step-dot" aria-hidden="true" />
+          {text}
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+export function BackendStatus() {
+  const [health, setHealth] = useState<'checking' | 'online' | 'offline'>('checking')
+  const [message, setMessage] = useState('Checking the FastAPI backend…')
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setHealth('checking')
+    checkHealth(controller.signal)
+      .then(() => {
+        if (controller.signal.aborted) return
+        setHealth('online')
+        setMessage('FastAPI is reachable.')
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        setHealth('offline')
+        setMessage(
+          error instanceof Error ? error.message : 'The backend is unavailable.',
+        )
+      })
+    return () => controller.abort()
+  }, [])
+
+  return (
+    <div className={`backend-status backend-status-${health}`}>
+      <span className="backend-status-dot" />
+      <span className="text-xs">{health === 'online' ? 'Backend Connected' : message}</span>
+    </div>
+  )
+}
+
+export function Spinner() {
+  return <span className="spinner" aria-hidden="true" />
+}
+
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <span className={`skeleton ${className}`} aria-hidden="true" />
+}
+
+export function LoadingState({ label }: { label: string }) {
+  return (
+    <div className="load-panel" role="status">
+      <Spinner />
+      <span>{label}</span>
+    </div>
+  )
+}
+
+export function ErrorState({
+  title,
+  message,
+  onRetry,
+  onReauth,
+}: {
+  title: string
+  message: string
+  onRetry?: () => void
+  onReauth?: () => void
+}) {
+  return (
+    <Callout tone="danger" title={title}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span>{message}</span>
+        <span className="flex shrink-0 gap-1.5">
+          {onRetry ? (
+            <button type="button" className="btn btn-sm" onClick={onRetry}>
+              Retry
+            </button>
+          ) : null}
+          {onReauth ? (
+            <button type="button" className="btn btn-sm" onClick={onReauth}>
+              Sign in again
+            </button>
+          ) : null}
+        </span>
+      </div>
+    </Callout>
   )
 }
 
 const CALLOUT_ICON: Record<Tone, string> = {
   neutral: 'i',
   info: 'i',
+  ok: '✓',
   warn: '!',
   danger: '!',
-  ok: '✓',
 }
 
 export function Callout({
-  tone = 'info',
+  tone = 'neutral',
   title,
   children,
 }: {
@@ -91,57 +194,47 @@ export function Callout({
   children: ReactNode
 }) {
   return (
-    <div
-      className="callout"
-      data-tone={tone}
-      role={tone === 'danger' ? 'alert' : undefined}
-    >
+    <aside className="callout" data-tone={tone} aria-label={title ?? tone}>
       <span className="callout-icon" aria-hidden="true">
         {CALLOUT_ICON[tone]}
       </span>
-      <div className="min-w-0">
-        {title ? <strong className="block">{title}</strong> : null}
-        <div className={title ? 'mt-0.5' : undefined}>{children}</div>
+      <div className="callout-body">
+        {title ? <p className="callout-title">{title}</p> : null}
+        <div className="text-sm">{children}</div>
       </div>
-    </div>
+    </aside>
   )
 }
 
 export function Field({
   label,
   htmlFor,
-  required,
   hint,
   error,
   children,
 }: {
   label: string
-  htmlFor: string
-  required?: boolean
+  htmlFor?: string
   hint?: string
   error?: string
   children: ReactNode
 }) {
+  const hintId = htmlFor ? `${htmlFor}-hint` : undefined
+  const errorId = htmlFor ? `${htmlFor}-err` : undefined
   return (
     <div className="field">
       <label className="label" htmlFor={htmlFor}>
         {label}
-        {required ? (
-          <span className="req" aria-hidden="true">
-            *
-          </span>
-        ) : null}
       </label>
       {children}
-      {hint && !error ? (
-        <p className="hint" id={`${htmlFor}-hint`}>
+      {hint ? (
+        <p id={hintId} className="hint">
           {hint}
         </p>
       ) : null}
       {error ? (
-        <p className="field-error" id={`${htmlFor}-error`}>
-          <span aria-hidden="true">!</span>
-          <span>{error}</span>
+        <p id={errorId} className="field-error" role="alert">
+          {error}
         </p>
       ) : null}
     </div>
@@ -151,21 +244,24 @@ export function Field({
 export function SectionCard({
   title,
   meta,
+  action,
   children,
-  bodyClassName = 'card-pad',
 }: {
   title: string
   meta?: ReactNode
+  action?: ReactNode
   children: ReactNode
-  bodyClassName?: string
 }) {
   return (
-    <section className="card">
-      <div className="card-head">
-        <h2 className="card-title">{title}</h2>
-        {meta ? <div className="text-xs muted">{meta}</div> : null}
-      </div>
-      <div className={bodyClassName}>{children}</div>
+    <section className="card card-pad">
+      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-(--line) pb-3">
+        <div>
+          <h2 className="text-base font-extrabold">{title}</h2>
+          {meta ? <p className="m-0 mt-0.5 text-xs muted">{meta}</p> : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </header>
+      {children}
     </section>
   )
 }
