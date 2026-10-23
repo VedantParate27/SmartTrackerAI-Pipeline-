@@ -1,11 +1,13 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { AiSuggestion, CorrectionHistory } from '#/components/case/AiSuggestion'
 import CaseTimeline from '#/components/case/CaseTimeline'
 import DecisionPanel from '#/components/case/DecisionPanel'
+import DetailsPanel from '#/components/case/DetailsPanel'
+import PhotoAiPanel from '#/components/case/PhotoAiPanel'
 import TaskPanel from '#/components/case/TaskPanel'
-import type { Assignee } from '#/components/case/TaskPanel'
 import {
+  AIStatusPill,
   BackendPriorityPill,
   BackendStatusPill,
   Callout,
@@ -17,12 +19,16 @@ import {
   WastePill,
 } from '#/components/ui'
 import {
+  aiRunLost,
   findTaskForComplaint,
   getAIOutputs,
+  getAIReview,
   getAdminQueueItem,
   getCorrections,
   getEvents,
   getKnownCleaners,
+  getTaskProofReview,
+  needsReview,
   resolveComplaintId,
 } from '#/lib/api'
 import { signOut, useAuth } from '#/lib/auth'
@@ -33,7 +39,7 @@ import {
   triageModeLabel,
 } from '#/lib/complaint-format'
 import { formatDateTime } from '#/lib/format'
-import { useApi } from '#/lib/use-api'
+import { useApi, usePolling } from '#/lib/use-api'
 
 export const Route = createFileRoute('/admin/cases/$caseId')({
   component: CaseDetailPage,
@@ -53,7 +59,22 @@ function CaseDetailPage() {
     [caseId, token],
   )
   const cid = complaintId.data
-  const ai = useApi(
+
+  // The photo analysis runs in the background; poll until it settles.
+  const aiReview = useApi(
+    token && cid !== null ? (signal) => getAIReview(cid, token, signal) : null,
+    [cid, token],
+  )
+  const analysis = aiReview.data?.analysis ?? null
+  const analysisLost =
+    analysis?.ai_status === 'pending' && aiRunLost(analysis.created_at)
+  const reviewStalled = usePolling(
+    analysis?.ai_status === 'pending' && !analysisLost,
+    aiReview.reload,
+    { busy: aiReview.loading, runKey: analysis?.id ?? null },
+  )
+
+  const textAi = useApi(
     token && cid !== null ? (signal) => getAIOutputs(cid, token, signal) : null,
     [cid, token],
   )
@@ -63,10 +84,35 @@ function CaseDetailPage() {
       : null,
     [cid, token],
   )
+
+  // /cleaner/tasks finds the task; the admin proof review then supplies the
+  // cleaner (null until picked), the before photos and the AI comparison.
   const task = useApi(
     token ? (signal) => findTaskForComplaint(caseId, token, signal) : null,
     [caseId, token],
   )
+  const taskId = task.data?.task_id ?? null
+  const taskReview = useApi(
+    token && taskId
+      ? (signal) => getTaskProofReview(taskId, token, signal)
+      : null,
+    [taskId, token],
+  )
+  // The newest proof whose before/after comparison is still running.
+  const comparing =
+    taskReview.data?.proofs
+      .filter(
+        (proof) =>
+          proof.verification_status === 'pending_verification' &&
+          proof.ai_processed_at === null &&
+          !aiRunLost(proof.uploaded_at),
+      )
+      .at(-1) ?? null
+  const proofStalled = usePolling(comparing !== null, taskReview.reload, {
+    busy: taskReview.loading,
+    runKey: comparing?.id ?? null,
+  })
+
   const events = useApi(
     token
       ? (signal) => getEvents({ case_id: caseId, limit: 500 }, token, signal)
@@ -77,32 +123,33 @@ function CaseDetailPage() {
     token ? (signal) => getKnownCleaners(token, signal) : null,
     [token],
   )
-
   const knownCleaners = useMemo(() => cleaners.data ?? [], [cleaners.data])
 
-  // The latest assignment event is the only record of who holds the task:
-  // CleanerTaskResponse carries no cleaner id.
-  const assignee = useMemo<Assignee | null>(() => {
-    const latest = events.data?.find((event) =>
-      ['cleaner_assigned', 'cleaner_reassigned'].includes(event.activity),
-    )
-    const id = Number(latest?.new_value)
-    if (!latest || !Number.isInteger(id)) return null
-    const fromEvent = latest.meta?.cleaner_name
-    return {
-      id,
-      name:
-        typeof fromEvent === 'string'
-          ? fromEvent
-          : (knownCleaners.find((cleaner) => cleaner.id === id)?.name ?? null),
-    }
-  }, [events.data, knownCleaners])
+  // Assignment events are the only place cleaner names are recorded.
+  const cleanerName = useCallback(
+    (id: number) => {
+      for (const event of events.data ?? []) {
+        if (
+          (event.activity === 'cleaner_assigned' ||
+            event.activity === 'cleaner_reassigned') &&
+          Number(event.new_value) === id &&
+          typeof event.meta?.cleaner_name === 'string'
+        ) {
+          return event.meta.cleaner_name
+        }
+      }
+      return knownCleaners.find((cleaner) => cleaner.id === id)?.name ?? null
+    },
+    [events.data, knownCleaners],
+  )
 
   function refreshAll() {
     item.reload()
-    ai.reload()
+    aiReview.reload()
+    textAi.reload()
     corrections.reload()
     task.reload()
+    taskReview.reload()
     events.reload()
     cleaners.reload()
   }
@@ -119,7 +166,7 @@ function CaseDetailPage() {
     return <LoadingState label="Loading this complaint…" />
   }
 
-  if (item.error || !item.data) {
+  if (!item.data) {
     return (
       <div className="grid gap-4">
         <ErrorState
@@ -136,13 +183,12 @@ function CaseDetailPage() {
   }
 
   const complaint = item.data
-  const latestAi = ai.data?.at(-1) ?? null
-  // Wait for the prediction before seeding the form, unless it can't load.
-  const aiSettled =
-    ai.data !== null || ai.error !== null || complaintId.error !== null
   const map = mapsUrl(complaint.latitude, complaint.longitude)
   const coordinates = formatCoordinates(complaint.latitude, complaint.longitude)
   const busy = item.loading || task.loading || events.loading
+  // Unknown until /cleaner/tasks answers; DecisionPanel won't offer assign_cleaner then.
+  const hasTask =
+    task.data !== null ? true : task.loading || task.error ? null : false
 
   return (
     <div className="grid gap-4">
@@ -161,6 +207,15 @@ function CaseDetailPage() {
         </button>
       </div>
 
+      {item.error ? (
+        <ErrorState
+          title="This complaint could not be refreshed"
+          message={item.error}
+          onRetry={item.reload}
+          onReauth={item.expired ? signOut : undefined}
+        />
+      ) : null}
+
       <header className="card card-pad" aria-busy={item.loading}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -173,8 +228,13 @@ function CaseDetailPage() {
             <BackendStatusPill status={complaint.status} />
             <BackendPriorityPill priority={complaint.priority} />
             <ReviewPill
-              required={complaint.review_required}
+              required={needsReview(complaint)}
               reason={complaint.review_reason}
+            />
+            <AIStatusPill
+              status={analysis?.ai_status ?? null}
+              usable={analysis?.image_usable}
+              lost={analysisLost}
             />
           </div>
         </div>
@@ -197,7 +257,7 @@ function CaseDetailPage() {
             <dd className="m-0">{formatDateTime(complaint.updated_at)}</dd>
           </div>
           <div>
-            <dt className="kicker">Waste</dt>
+            <dt className="kicker">Waste (complaint)</dt>
             <dd className="m-0 flex flex-wrap items-center gap-1.5">
               <WastePill wasteType={complaint.waste_type} />
               {complaint.quantity_severity ? (
@@ -214,7 +274,7 @@ function CaseDetailPage() {
             </dd>
           </div>
           <div>
-            <dt className="kicker">Triage</dt>
+            <dt className="kicker">Text-AI triage</dt>
             <dd className="m-0">{triageModeLabel(complaint.triage_mode)}</dd>
           </div>
           <div>
@@ -248,55 +308,75 @@ function CaseDetailPage() {
             ) : null}
           </SectionCard>
 
-          {complaintId.error ? null : ai.error ? (
-            <SectionCard title="AI suggestion">
+          <PhotoAiPanel
+            review={aiReview.data}
+            loading={aiReview.loading || (cid === null && !complaintId.error)}
+            error={aiReview.error}
+            onRetry={aiReview.reload}
+            stalled={reviewStalled}
+            needsId={complaintId.error !== null}
+            trackingId={complaint.tracking_id}
+            token={token}
+            canUpload={
+              complaint.status === 'pending' ||
+              complaint.status === 'in_progress'
+            }
+            onUploaded={aiReview.reload}
+          />
+
+          {textAi.error ? (
+            <SectionCard title="Text-AI triage">
               <ErrorState
-                title="AI output could not be loaded"
-                message={ai.error}
-                onRetry={ai.reload}
+                title="Text-AI output could not be loaded"
+                message={textAi.error}
+                onRetry={textAi.reload}
               />
             </SectionCard>
-          ) : ai.data ? (
-            <AiSuggestion outputs={ai.data} />
-          ) : (
-            <SectionCard title="AI suggestion">
-              <LoadingState label="Loading the AI prediction…" />
-            </SectionCard>
-          )}
+          ) : textAi.data ? (
+            <AiSuggestion outputs={textAi.data} />
+          ) : null}
 
-          {aiSettled ? (
-            <DecisionPanel
-              key={`${complaint.tracking_id}:${latestAi?.id ?? 'none'}`}
-              item={complaint}
-              complaintId={cid}
-              idError={complaintId.error}
-              onRetryId={complaintId.reload}
-              latest={latestAi}
-              cleaners={knownCleaners}
-              token={token}
-              onSaved={refreshAll}
-            />
-          ) : (
-            <SectionCard title="Decision">
-              <LoadingState label="Preparing the decision form…" />
-            </SectionCard>
-          )}
+          <DecisionPanel
+            item={complaint}
+            complaintId={cid}
+            idError={complaintId.error}
+            onRetryId={complaintId.reload}
+            hasTask={hasTask}
+            analysis={analysis}
+            events={events.data ?? []}
+            cleaners={knownCleaners}
+            token={token}
+            onSaved={refreshAll}
+          />
 
           <TaskPanel
             complaintStatus={complaint.status}
             complaintId={cid}
             task={task.data}
+            review={taskReview.data}
             loading={task.loading}
-            error={task.error}
-            onRetry={task.reload}
-            assignee={assignee}
+            error={task.error ?? taskReview.error}
+            onRetry={() => {
+              task.reload()
+              taskReview.reload()
+            }}
+            cleanerName={cleanerName}
             cleaners={knownCleaners}
             token={token}
             onChanged={refreshAll}
+            aiStalled={proofStalled}
           />
         </div>
 
         <aside className="grid content-start gap-4">
+          <DetailsPanel
+            item={complaint}
+            complaintId={cid}
+            hasTask={task.data !== null}
+            token={token}
+            onSaved={refreshAll}
+          />
+
           <SectionCard title="Case history" meta="event_log">
             {events.error ? (
               <ErrorState
@@ -311,23 +391,19 @@ function CaseDetailPage() {
             )}
           </SectionCard>
 
-          <SectionCard title="AI accept / correct" meta="ai_corrections">
-            {corrections.error ? (
+          {corrections.error ? (
+            <SectionCard title="Text-AI accept / correct">
               <ErrorState
                 title="Corrections unavailable"
                 message={corrections.error}
                 onRetry={corrections.reload}
               />
-            ) : corrections.data ? (
+            </SectionCard>
+          ) : corrections.data && corrections.data.length > 0 ? (
+            <SectionCard title="Text-AI accept / correct" meta="ai_corrections">
               <CorrectionHistory corrections={corrections.data} />
-            ) : complaintId.error ? (
-              <p className="m-0 text-sm muted">
-                Needs the internal complaint id, which could not be resolved.
-              </p>
-            ) : (
-              <LoadingState label="Loading…" />
-            )}
-          </SectionCard>
+            </SectionCard>
+          ) : null}
         </aside>
       </div>
     </div>

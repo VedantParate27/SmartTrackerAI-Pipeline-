@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
+import PhotoInput from '#/components/PhotoInput'
 import {
   Callout,
   ErrorState,
+  BackendPhoto,
   LoadingState,
-  ProofImage,
   ProofStatusPill,
   SectionCard,
   Spinner,
@@ -13,6 +14,7 @@ import {
 } from '#/components/ui'
 import {
   backendFileUrl,
+  getAIAnalysis,
   getCleanerTask,
   startCleanerTask,
   uploadProof,
@@ -30,9 +32,6 @@ import { useApi } from '#/lib/use-api'
 export const Route = createFileRoute('/cleaner/tasks/$taskId')({
   component: TaskPage,
 })
-
-/** The backend sets no size limit; this keeps an upload inside its 30 s window. */
-const MAX_BYTES = 15 * 1024 * 1024
 
 function TaskPage() {
   const { taskId } = Route.useParams()
@@ -97,6 +96,13 @@ function TaskDetail({
   const canUpload = ['assigned', 'in_progress', 'rejected'].includes(
     task.status,
   )
+  // The citizen's photo is the "before" the proof gets compared against; the
+  // assigned cleaner may read it. Null when the citizen never attached one.
+  const before = useApi(
+    (signal) => getAIAnalysis(task.tracking_id, token, signal),
+    [task.tracking_id, token],
+  )
+  const beforeUrl = before.data?.image_url ?? null
 
   return (
     <div className="grid gap-4">
@@ -166,7 +172,27 @@ function TaskDetail({
       ) : null}
 
       <SectionCard title="What to clean">
-        <p className="original-text m-0">{task.complaint_text}</p>
+        <div
+          className={
+            beforeUrl
+              ? 'grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,14rem)]'
+              : undefined
+          }
+        >
+          <p className="original-text m-0 self-start">{task.complaint_text}</p>
+          {beforeUrl ? (
+            <figure className="m-0 grid gap-1">
+              <BackendPhoto
+                src={backendFileUrl(beforeUrl)}
+                alt="The citizen's photo of the waste, before cleanup"
+                className="photo-frame"
+              />
+              <figcaption className="text-xs muted">
+                The citizen's photo — match it in your after photo.
+              </figcaption>
+            </figure>
+          ) : null}
+        </div>
         {task.notes ? (
           <div className="mt-3">
             <span className="kicker">Instructions from the admin</span>
@@ -241,7 +267,7 @@ function TaskDetail({
           <ul className="proof-grid list-none p-0">
             {[...task.proofs].reverse().map((proof) => (
               <li key={proof.id} className="proof-card">
-                <ProofImage
+                <BackendPhoto
                   src={backendFileUrl(proof.image_url)}
                   alt={`Proof uploaded ${formatDateTime(proof.uploaded_at)}`}
                 />
@@ -277,38 +303,9 @@ function ProofUpload({
   onDone: () => void
 }) {
   const [file, setFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<string | null>(null)
-  const [fileError, setFileError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expired, setExpired] = useState(false)
-
-  // Release the object URL whenever the preview changes or the form goes away.
-  useEffect(() => {
-    return () => {
-      if (preview) URL.revokeObjectURL(preview)
-    }
-  }, [preview])
-
-  function choose(next: File | null) {
-    setError(null)
-    if (!next) {
-      setFile(null)
-      setPreview(null)
-      return
-    }
-    if (!next.type.startsWith('image/')) {
-      setFileError('Choose a photo (JPEG, PNG or similar).')
-      return
-    }
-    if (next.size > MAX_BYTES) {
-      setFileError('That photo is over 15 MB. Take a smaller one.')
-      return
-    }
-    setFileError(null)
-    setFile(next)
-    setPreview(URL.createObjectURL(next))
-  }
 
   return (
     <form
@@ -316,14 +313,14 @@ function ProofUpload({
       onSubmit={async (event) => {
         event.preventDefault()
         if (!file) {
-          setFileError('Take or choose a photo of the cleaned spot first.')
+          setError('Take or choose a photo of the cleaned spot first.')
           return
         }
         setUploading(true)
         setError(null)
         try {
           await uploadProof(taskId, file, token)
-          choose(null)
+          setFile(null)
           onDone()
         } catch (caught) {
           setExpired(isExpiredSession(caught))
@@ -333,40 +330,27 @@ function ProofUpload({
         }
       }}
     >
-      {error ? (
+      {expired && error ? (
         <ErrorState
           title="Photo was not uploaded"
           message={error}
-          onReauth={expired ? signOut : undefined}
+          onReauth={signOut}
         />
       ) : null}
 
-      <label className="file-drop relative">
-        <input
-          type="file"
-          accept="image/*"
-          capture="environment"
-          disabled={uploading}
-          onChange={(event) => choose(event.target.files?.[0] ?? null)}
-        />
-        {preview ? (
-          <img className="file-preview" src={preview} alt="Selected proof" />
-        ) : (
-          <span aria-hidden="true" className="text-2xl">
-            ⬆
-          </span>
-        )}
-        <span className="font-bold text-(--fg)">
-          {file ? file.name : 'Take or choose a photo'}
-        </span>
-        <span>Show the spot after cleaning.</span>
-      </label>
-      {fileError ? (
-        <p className="field-error m-0">
-          <span aria-hidden="true">!</span>
-          <span>{fileError}</span>
-        </p>
-      ) : null}
+      <PhotoInput
+        id={`proof-${taskId}`}
+        file={file}
+        onChange={(next) => {
+          setFile(next)
+          setError(null)
+        }}
+        disabled={uploading}
+        title="Take a photo of the cleaned spot"
+        hint="Show the spot after cleaning · JPEG, PNG or WebP up to 8 MB"
+        error={expired ? null : error}
+        capture="environment"
+      />
 
       <div>
         <button

@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import AuthPanel from '#/components/AuthPanel'
+import PhotoCheck from '#/components/PhotoCheck'
+import PhotoInput from '#/components/PhotoInput'
 import {
   BackendPriorityPill,
   BackendStatusPill,
+  Callout,
   ErrorState,
   Field,
   Spinner,
@@ -14,6 +17,7 @@ import {
   WASTE_TYPES,
   createComplaint,
   fieldErrors,
+  uploadComplaintImage,
 } from '#/lib/api'
 import type { ComplaintResponse, Severity, WasteType } from '#/lib/api'
 import { isExpiredSession, signOut, useAuth } from '#/lib/auth'
@@ -91,10 +95,15 @@ function SubmitPage() {
   )
   const [locating, setLocating] = useState(false)
   const [errors, setErrors] = useState<FormErrors>({})
-  const [submitting, setSubmitting] = useState(false)
+  const [photo, setPhoto] = useState<File | null>(null)
+  const [stage, setStage] = useState<'idle' | 'creating' | 'uploading'>('idle')
   const [requestError, setRequestError] = useState<string | null>(null)
   const [expired, setExpired] = useState(false)
+  // The create response is kept as the source of truth: the photo upload's
+  // response already carries the AI's (still null) waste_type.
   const [created, setCreated] = useState<ComplaintResponse | null>(null)
+  const [photoError, setPhotoError] = useState<string | null>(null)
+  const submitting = stage !== 'idle'
 
   function update<TKey extends keyof FormValues>(
     key: TKey,
@@ -188,19 +197,42 @@ function SubmitPage() {
           </dl>
         </section>
 
+        <section className="card card-pad mt-4" aria-labelledby="photo-heading">
+          <h2 id="photo-heading" className="card-title">
+            Photo
+          </h2>
+          {photoError ? (
+            <div className="mt-3">
+              <Callout tone="warn" title="The photo was not attached">
+                {photoError} Your complaint is saved — try adding the photo
+                again below.
+              </Callout>
+            </div>
+          ) : null}
+          <div className="mt-3">
+            <PhotoCheck
+              trackingId={created.tracking_id}
+              token={session.accessToken}
+              canUpload
+              onUploaded={() => setPhotoError(null)}
+            />
+          </div>
+        </section>
+
         <section className="card card-pad mt-4">
           <h2 className="card-title">What happens next</h2>
           <ol className="mt-2 grid gap-1.5 pl-5 text-sm muted">
             <li>
-              An AI assistant suggests the waste type and how serious it is.
+              If you added a photo, an automatic check looks at the waste and
+              how much there is.
             </li>
             <li>
-              A staff member checks that suggestion — the AI never decides
-              alone.
+              A staff member reviews the complaint and decides what to do — the
+              automatic check only advises.
             </li>
             <li>
-              You either get disposal guidance, or a cleaner is sent and must
-              upload a photo before the case is closed.
+              If a cleaner is sent, they must upload an after photo, and staff
+              compare it before the case is closed.
             </li>
           </ol>
         </section>
@@ -220,6 +252,8 @@ function SubmitPage() {
               setCreated(null)
               setValues(EMPTY)
               setCoords(null)
+              setPhoto(null)
+              setPhotoError(null)
             }}
           >
             Report another problem
@@ -263,8 +297,9 @@ function SubmitPage() {
           setErrors(found)
           if (Object.keys(found).length > 0) return
 
-          setSubmitting(true)
+          setStage('creating')
           setRequestError(null)
+          setPhotoError(null)
           try {
             const response = await createComplaint(
               {
@@ -280,6 +315,21 @@ function SubmitPage() {
               },
               session.accessToken,
             )
+            if (photo) {
+              setStage('uploading')
+              try {
+                await uploadComplaintImage(
+                  response.tracking_id,
+                  photo,
+                  session.accessToken,
+                )
+              } catch (caught) {
+                // The complaint exists either way; only the photo is missing.
+                setPhotoError(
+                  caught instanceof Error ? caught.message : 'Upload failed.',
+                )
+              }
+            }
             setCreated(response)
           } catch (error) {
             setExpired(isExpiredSession(error))
@@ -292,7 +342,7 @@ function SubmitPage() {
                 : 'The complaint could not be submitted.',
             )
           } finally {
-            setSubmitting(false)
+            setStage('idle')
           }
         }}
       >
@@ -314,6 +364,21 @@ function SubmitPage() {
             onChange={(event) => update('complaint_text', event.target.value)}
           />
         </Field>
+
+        <fieldset className="card card-pad grid gap-3">
+          <legend className="kicker px-1">Photo (recommended)</legend>
+          <p className="m-0 text-sm muted">
+            An automatic check looks at the photo to judge the waste and how
+            much there is. Staff still review every complaint.
+          </p>
+          <PhotoInput
+            id="complaint-photo"
+            file={photo}
+            onChange={setPhoto}
+            disabled={submitting}
+            hint="Show the waste clearly · JPEG, PNG or WebP up to 8 MB"
+          />
+        </fieldset>
 
         <fieldset className="card card-pad grid gap-4">
           <legend className="kicker px-1">Where is it?</legend>
@@ -504,7 +569,11 @@ function SubmitPage() {
             disabled={submitting}
           >
             {submitting ? <Spinner /> : null}
-            {submitting ? 'Submitting…' : 'Submit complaint'}
+            {stage === 'creating'
+              ? 'Submitting…'
+              : stage === 'uploading'
+                ? 'Uploading photo…'
+                : 'Submit complaint'}
           </button>
           <Link to="/" className="btn btn-quiet btn-block sm:w-auto">
             Cancel

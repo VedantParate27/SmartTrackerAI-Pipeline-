@@ -7,4 +7,9 @@ chroma_db/
 
 # Uploaded proof images
 backend/uploads/*.jpg
+
+# AI model weights
 ai/models/*.pt
+
+# Runtime-generated upload files
+backend/uploads/

@@ -1,0 +1,208 @@
+{
+  "meta": {
+    "records": 300,
+    "sources": [
+      "synthetic"
+    ],
+    "synthetic_data": true
+  },
+  "locations": [
+    "Dadar",
+    "Kalyan-Dombivali",
+    "Wadala"
+  ],
+  "waste_types": [
+    "dry",
+    "e_waste",
+    "hazardous",
+    "mixed",
+    "sanitary",
+    "wet"
+  ],
+  "severities": [
+    "domestic",
+    "dump_scale",
+    "moderate"
+  ],
+  "weeks": [
+    "2026-W40",
+    "2026-W41",
+    "2026-W42",
+    "2026-W43",
+    "2026-W44"
+  ],
+  "cleaners": [
+    "C001",
+    "C002",
+    "C003",
+    "C004",
+    "C005"
+  ],
+  "totals": {
+    "Dadar": 91,
+    "Kalyan-Dombivali": 118,
+    "Wadala": 91
+  },
+  "by_waste_type": {
+    "Dadar": {
+      "dry": 17,
+      "e_waste": 22,
+      "hazardous": 14,
+      "mixed": 14,
+      "sanitary": 14,
+      "wet": 10
+    },
+    "Kalyan-Dombivali": {
+      "dry": 12,
+      "e_waste": 19,
+      "hazardous": 22,
+      "mixed": 17,
+      "sanitary": 29,
+      "wet": 19
+    },
+    "Wadala": {
+      "dry": 21,
+      "e_waste": 19,
+      "hazardous": 7,
+      "mixed": 18,
+      "sanitary": 10,
+      "wet": 16
+    }
+  },
+  "by_severity": {
+    "Dadar": {
+      "domestic": 51,
+      "dump_scale": 13,
+      "moderate": 27
+    },
+    "Kalyan-Dombivali": {
+      "domestic": 67,
+      "dump_scale": 9,
+      "moderate": 42
+    },
+    "Wadala": {
+      "domestic": 55,
+      "dump_scale": 13,
+      "moderate": 23
+    }
+  },
+  "weekly": {
+    "Dadar": {
+      "2026-W40": 15,
+      "2026-W41": 23,
+      "2026-W42": 21,
+      "2026-W43": 22,
+      "2026-W44": 10
+    },
+    "Kalyan-Dombivali": {
+      "2026-W40": 16,
+      "2026-W41": 28,
+      "2026-W42": 28,
+      "2026-W43": 26,
+      "2026-W44": 20
+    },
+    "Wadala": {
+      "2026-W40": 6,
+      "2026-W41": 18,
+      "2026-W42": 26,
+      "2026-W43": 22,
+      "2026-W44": 19
+    }
+  },
+  "median_cleaning_minutes": {
+    "Dadar": 21.8,
+    "Kalyan-Dombivali": 18.1,
+    "Wadala": 23.9
+  },
+  "median_response_minutes": {
+    "Dadar": 51.0,
+    "Kalyan-Dombivali": 50.5,
+    "Wadala": 49.0
+  },
+  "cleaner_totals": {
+    "C001": 44,
+    "C002": 59,
+    "C003": 77,
+    "C004": 65,
+    "C005": 55
+  },
+  "cleaner_median_cleaning_minutes": {
+    "C001": 21.2,
+    "C002": 23.2,
+    "C003": 18.8,
+    "C004": 20.2,
+    "C005": 22.5
+  },
+  "cleaner_by_location": {
+    "C001": {
+      "Dadar": {
+        "count": 10,
+        "median_cleaning_minutes": 23.8
+      },
+      "Kalyan-Dombivali": {
+        "count": 20,
+        "median_cleaning_minutes": 20.6
+      },
+      "Wadala": {
+        "count": 14,
+        "median_cleaning_minutes": 20.6
+      }
+    },
+    "C002": {
+      "Dadar": {
+        "count": 24,
+        "median_cleaning_minutes": 31.0
+      },
+      "Kalyan-Dombivali": {
+        "count": 25,
+        "median_cleaning_minutes": 18.2
+      },
+      "Wadala": {
+        "count": 10,
+        "median_cleaning_minutes": 29.5
+      }
+    },
+    "C003": {
+      "Dadar": {
+        "count": 23,
+        "median_cleaning_minutes": 21.5
+      },
+      "Kalyan-Dombivali": {
+        "count": 27,
+        "median_cleaning_minutes": 17.4
+      },
+      "Wadala": {
+        "count": 27,
+        "median_cleaning_minutes": 16.6
+      }
+    },
+    "C004": {
+      "Dadar": {
+        "count": 20,
+        "median_cleaning_minutes": 19.1
+      },
+      "Kalyan-Dombivali": {
+        "count": 26,
+        "median_cleaning_minutes": 16.9
+      },
+      "Wadala": {
+        "count": 19,
+        "median_cleaning_minutes": 24.6
+      }
+    },
+    "C005": {
+      "Dadar": {
+        "count": 14,
+        "median_cleaning_minutes": 18.4
+      },
+      "Kalyan-Dombivali": {
+        "count": 20,
+        "median_cleaning_minutes": 31.2
+      },
+      "Wadala": {
+        "count": 21,
+        "median_cleaning_minutes": 31.1
+      }
+    }
+  }
+}

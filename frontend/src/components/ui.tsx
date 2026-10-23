@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { API_BASE_URL, checkHealth } from '#/lib/api'
+import type { AIStatus } from '#/lib/api'
 import {
   backendConfidence,
   reviewReasonLabel,
@@ -126,38 +127,122 @@ export function ProofStatusPill({ status }: { status: string }) {
 }
 
 /**
- * A proof photo that degrades to a labelled placeholder. Seeded proofs point
- * at files that were never written, so a missing image is a normal case.
+ * A backend-served photo that degrades to a labelled placeholder. Seeded
+ * proofs point at files that were never written, so a missing image is a
+ * normal case. The failure is tied to its src, so a replaced photo retries.
  */
-export function ProofImage({ src, alt }: { src: string; alt: string }) {
-  const [failed, setFailed] = useState(false)
+export function BackendPhoto({
+  src,
+  alt,
+  className = 'proof-image',
+}: {
+  src: string
+  alt: string
+  className?: string
+}) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const ref = useRef<HTMLImageElement>(null)
 
   // An image that failed during SSR, before React attached onError, never
   // fires the event again; a completed image with no pixels has failed.
   useEffect(() => {
     const image = ref.current
-    if (image?.complete && image.naturalWidth === 0) setFailed(true)
+    if (image?.complete && image.naturalWidth === 0) setFailedSrc(src)
   }, [src])
 
-  if (failed) {
+  if (failedSrc === src) {
     return (
-      <div className="proof-image proof-missing" role="img" aria-label={alt}>
+      <div className={`${className} proof-missing`} role="img" aria-label={alt}>
         <span>Image unavailable</span>
       </div>
     )
   }
   return (
-    <a href={src} target="_blank" rel="noreferrer">
+    <a href={src} target="_blank" rel="noreferrer" className="photo-link">
       <img
         ref={ref}
-        className="proof-image"
+        className={className}
         src={src}
         alt={alt}
         loading="lazy"
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(src)}
       />
     </a>
+  )
+}
+
+const AI_STATUS_PILL: Record<AIStatus, { tone: Tone; text: string }> = {
+  pending: { tone: 'info', text: 'Photo check running' },
+  completed: { tone: 'ok', text: 'Photo checked' },
+  failed: { tone: 'warn', text: 'Photo check failed' },
+}
+
+/**
+ * State of the background photo analysis; nothing when no photo exists. A
+ * completed check on a photo the AI could not use reads as a warning, not
+ * a success, and so does a run that was lost (see aiRunLost).
+ */
+export function AIStatusPill({
+  status,
+  usable,
+  lost,
+}: {
+  status: AIStatus | null
+  usable?: boolean | null
+  lost?: boolean
+}) {
+  if (!status) return null
+  const { tone, text } =
+    status === 'completed' && usable === false
+      ? { tone: 'warn' as Tone, text: 'Photo not usable' }
+      : status === 'pending' && lost
+        ? { tone: 'warn' as Tone, text: 'Photo check didn’t finish' }
+        : AI_STATUS_PILL[status]
+  return (
+    <span
+      className="pill"
+      data-tone={tone}
+      data-pulse={status === 'pending' && !lost ? '' : undefined}
+    >
+      {text}
+    </span>
+  )
+}
+
+/**
+ * A 0–1 AI confidence as a bar. 0.7 is the backend's own line — the default
+ * escalation threshold (taxonomy.py) and the cleanup-review cut-off
+ * (waste_ai_service.py) — so the bar turns amber below it.
+ */
+export function ConfidenceMeter({
+  label,
+  value,
+}: {
+  label: string
+  value: number | null
+}) {
+  if (value === null) return null
+  const percent = Math.round(Math.min(1, Math.max(0, value)) * 100)
+  const tone: Tone = value >= 0.7 ? 'ok' : value >= 0.5 ? 'warn' : 'danger'
+  return (
+    <div className="meter-row">
+      <span className="meter-label">{label}</span>
+      <span
+        className="meter"
+        role="meter"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
+        <span
+          className="meter-fill"
+          data-tone={tone}
+          style={{ width: `${percent}%` }}
+        />
+      </span>
+      <span className="meter-value">{percent}%</span>
+    </div>
   )
 }
 
@@ -199,16 +284,30 @@ export function Callout({
   tone = 'info',
   title,
   children,
+  announce = false,
 }: {
   tone?: Tone
   title?: string
   children: ReactNode
+  /**
+   * For a result that replaces the control the user just used: announced as a
+   * status and focused, so keyboard and screen-reader users are not dropped
+   * back to the top of the page.
+   */
+  announce?: boolean
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (announce) ref.current?.focus()
+  }, [announce])
+
   return (
     <div
+      ref={ref}
       className="callout"
       data-tone={tone}
-      role={tone === 'danger' ? 'alert' : undefined}
+      role={tone === 'danger' ? 'alert' : announce ? 'status' : undefined}
+      tabIndex={announce ? -1 : undefined}
     >
       <span className="callout-icon" aria-hidden="true">
         {CALLOUT_ICON[tone]}

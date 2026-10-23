@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import AuthPanel from '#/components/AuthPanel'
+import PhotoCheck from '#/components/PhotoCheck'
 import {
+  AIStatusPill,
   BackendPriorityPill,
   BackendStatusPill,
   Callout,
@@ -13,7 +15,12 @@ import {
   StatusSteps,
   WastePill,
 } from '#/components/ui'
-import { getComplaint, getMyComplaints } from '#/lib/api'
+import {
+  citizenWasteType,
+  getComplaint,
+  getMyComplaints,
+  needsReview,
+} from '#/lib/api'
 import type { ComplaintResponse } from '#/lib/api'
 import { signOut, useAuth } from '#/lib/auth'
 import {
@@ -98,7 +105,7 @@ function TrackPage() {
         </form>
       ) : null}
 
-      <div className="mt-6" aria-live="polite" aria-busy={complaint.loading}>
+      <div className="mt-6" aria-busy={complaint.loading}>
         {complaint.loading && !complaint.data ? (
           <LoadingState label="Requesting the current record…" />
         ) : null}
@@ -112,7 +119,18 @@ function TrackPage() {
           />
         ) : null}
 
-        {complaint.data ? <ComplaintCard item={complaint.data} /> : null}
+        {complaint.data && token ? (
+          <ComplaintCard
+            item={complaint.data}
+            token={token}
+            // Owners and admins may upload; an assigned cleaner can read it but would get a 403.
+            mayUpload={session.role !== 'cleaner'}
+            onPhotoChange={() => {
+              complaint.reload()
+              mine.reload()
+            }}
+          />
+        ) : null}
       </div>
 
       {session ? (
@@ -145,7 +163,7 @@ function TrackPage() {
             ) : mine.data && mine.data.length > 0 ? (
               <ul className="m-0 grid list-none gap-2 p-0">
                 {mine.data.map((entry) => (
-                  <li key={entry.tracking_id}>
+                  <li key={entry.tracking_id} className="min-w-0">
                     <Link
                       to="/track"
                       search={{ id: entry.tracking_id }}
@@ -161,9 +179,10 @@ function TrackPage() {
                       </span>
                       <span className="flex shrink-0 flex-wrap gap-1.5">
                         <BackendStatusPill status={entry.status} />
-                        {entry.waste_type ? (
-                          <WastePill wasteType={entry.waste_type} />
+                        {citizenWasteType(entry) ? (
+                          <WastePill wasteType={citizenWasteType(entry)} />
                         ) : null}
+                        <AIStatusPill status={entry.ai_status} />
                       </span>
                     </Link>
                   </li>
@@ -182,10 +201,24 @@ function TrackPage() {
   )
 }
 
-function ComplaintCard({ item }: { item: ComplaintResponse }) {
+function ComplaintCard({
+  item,
+  token,
+  mayUpload,
+  onPhotoChange,
+}: {
+  item: ComplaintResponse
+  token: string
+  mayUpload: boolean
+  /** A photo was uploaded or its check finished: refetch the summaries. */
+  onPhotoChange: () => void
+}) {
   const map = mapsUrl(item.latitude, item.longitude)
   const coordinates = formatCoordinates(item.latitude, item.longitude)
-  const closed = ['resolved', 'closed'].includes(item.status.toLowerCase())
+  const status = item.status.toLowerCase()
+  const closed = status === 'resolved' || status === 'closed'
+  // Once a photo is analysed the response's waste_type is the AI's, not yours.
+  const ownType = citizenWasteType(item)
 
   return (
     <div className="grid gap-4">
@@ -220,8 +253,14 @@ function ComplaintCard({ item }: { item: ComplaintResponse }) {
           </div>
           <div>
             <dt className="kicker">Waste</dt>
-            <dd className="m-0 flex flex-wrap gap-1.5">
-              <WastePill wasteType={item.waste_type} />
+            <dd className="m-0 flex flex-wrap items-center gap-1.5">
+              {item.ai_status === null ? (
+                <WastePill wasteType={ownType} />
+              ) : (
+                <span className="text-sm muted">
+                  See the photo check{item.quantity_severity ? ' ·' : ''}
+                </span>
+              )}
               {item.quantity_severity ? (
                 <span className="text-sm muted">
                   {severityLabel(item.quantity_severity)} amount
@@ -235,6 +274,12 @@ function ComplaintCard({ item }: { item: ComplaintResponse }) {
               {item.intervention_required ? 'Needed' : 'Not requested'}
             </dd>
           </div>
+          {item.department ? (
+            <div className="sm:col-span-2">
+              <dt className="kicker">Handled by</dt>
+              <dd className="m-0 wrap-break-word">{item.department}</dd>
+            </div>
+          ) : null}
           <div className="sm:col-span-2">
             <dt className="kicker">Location</dt>
             <dd className="m-0">
@@ -257,7 +302,7 @@ function ComplaintCard({ item }: { item: ComplaintResponse }) {
         </dl>
       </section>
 
-      {item.review_required ? (
+      {needsReview(item) ? (
         <Callout tone="info" title="A staff member is reviewing this">
           The automatic check was not confident enough to route it alone, so a
           person is looking at it before anything is sent out.
@@ -271,16 +316,26 @@ function ComplaintCard({ item }: { item: ComplaintResponse }) {
         ) : null}
       </SectionCard>
 
+      <SectionCard title="Photo">
+        <PhotoCheck
+          trackingId={item.tracking_id}
+          token={token}
+          canUpload={!closed && mayUpload}
+          onUploaded={onPhotoChange}
+          onSettled={onPhotoChange}
+        />
+      </SectionCard>
+
       {item.recommended_action ? (
         <SectionCard title="Recommended action">
           <div className="draft-box">{item.recommended_action}</div>
         </SectionCard>
       ) : null}
 
-      {closed && item.intervention_required === false ? (
-        <Callout tone="info" title="Resolved without a cleaner visit">
-          Staff resolved this with self-disposal guidance. The tracking service
-          does not return that guidance text yet, so it cannot be shown here.
+      {status === 'closed' ? (
+        <Callout tone="info" title="This complaint was closed">
+          Staff closed this complaint. The tracking service does not share the
+          reason yet.
         </Callout>
       ) : null}
     </div>

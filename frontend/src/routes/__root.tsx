@@ -15,7 +15,7 @@ const THEME_INIT_SCRIPT = `(function(){try{var stored=window.localStorage.getIte
 
 /** The header's shield mark, inlined so the app ships without an icon file. */
 const FAVICON = `data:image/svg+xml,${encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#0b7482"/><path d="M16 5.2 7.9 8.4v6.6c0 4.9 3.3 9.2 8.1 10.7 4.8-1.5 8.1-5.8 8.1-10.7V8.4Z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><path d="m12.4 15.5 2.6 2.6 4.9-5.1" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#4b3bc4"/><path d="M16 5.2 7.9 8.4v6.6c0 4.9 3.3 9.2 8.1 10.7 4.8-1.5 8.1-5.8 8.1-10.7V8.4Z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><path d="m12.4 15.5 2.6 2.6 4.9-5.1" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 )}`
 
 export const Route = createRootRoute({

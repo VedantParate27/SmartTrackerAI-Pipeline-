@@ -26,9 +26,9 @@ npm run dev
 ## 3. Use it
 
 ```
-http://localhost:3000/submit         Citizen: create an account, report waste -> TRK-xxxxxxxx
+http://localhost:3000/submit         Citizen: create an account, report waste + photo -> TRK-xxxxxxxx
 http://localhost:3000/track          Citizen: status of that complaint + all your reports
-http://localhost:3000/admin          Admin: queue -> open a case -> accept/correct AI, dispatch or send guidance
+http://localhost:3000/admin          Admin: queue -> open a case -> read the photo check, decide, verify proof
 http://localhost:3000/cleaner        Cleaner: assigned tasks -> start -> upload photo proof
 http://localhost:3000/admin/events   Admin: event log, CSV exports for pm4py / DWM
 http://localhost:8000/docs           Swagger
@@ -88,3 +88,7 @@ npm run build                   # production build
 - `VITE_API_URL` (frontend/.env) must match the backend origin, and that origin
   must appear in `SMARTTRACKER_CORS_ORIGINS` (backend/.env).
 - JWTs expire after 60 minutes; the UI offers a re-login on 401.
+- Photo checks need the AI source: set `WASTE_AI_SRC` in `backend/.env` to the
+  folder containing `waste_pipeline.py` and `cleanup_verifier.py` (`ai/src` on
+  the `waste-image-classification` branch, not merged yet). Without it every
+  photo check ends as "failed" and admins decide manually.

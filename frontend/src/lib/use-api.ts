@@ -71,3 +71,48 @@ export function useApi<T>(
   const reload = useCallback(() => setNonce((n) => n + 1), [])
   return { data, error, expired, loading, reload, setData }
 }
+
+/**
+ * Calls `reload` every `intervalMs` while `active` (a background AI run is
+ * still pending). The budget — 45 × 3 s — covers the backend's
+ * WASTE_AI_TIMEOUT_S of 120 s with some slack and restarts for each run
+ * (`runKey`). A tick is skipped while the previous request is in flight
+ * (`busy`), because reloading would abort it. Returns true once the budget is
+ * spent with the run still pending.
+ */
+export function usePolling(
+  active: boolean,
+  reload: () => void,
+  {
+    busy = false,
+    runKey = null,
+  }: { busy?: boolean; runKey?: string | number | null } = {},
+  intervalMs = 3_000,
+  maxTries = 45,
+) {
+  const [exhausted, setExhausted] = useState(false)
+  const busyRef = useRef(busy)
+
+  useEffect(() => {
+    busyRef.current = busy
+  })
+
+  useEffect(() => {
+    setExhausted(false)
+    if (!active) return
+    let tries = 0
+    const timer = window.setInterval(() => {
+      if (busyRef.current) return
+      tries += 1
+      // The last tick still reloads, so a run that ends at the timeout is seen.
+      reload()
+      if (tries >= maxTries) {
+        window.clearInterval(timer)
+        setExhausted(true)
+      }
+    }, intervalMs)
+    return () => window.clearInterval(timer)
+  }, [active, reload, runKey, intervalMs, maxTries])
+
+  return exhausted
+}

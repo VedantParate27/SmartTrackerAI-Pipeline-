@@ -19,11 +19,18 @@ const META_KEYS = [
   'reasons',
   'confidence',
   'decision',
+  'note',
+  'ai_status',
   'cleaner_name',
   'rejection_reason',
   'notes',
   'task_id',
 ] as const
+
+const META_LABELS: Partial<Record<(typeof META_KEYS)[number], string>> = {
+  ai_status: 'AI status',
+  task_id: 'Task',
+}
 
 function metaSummary(meta: EventLogEntry['meta']) {
   if (!meta) return null
@@ -35,7 +42,7 @@ function metaSummary(meta: EventLogEntry['meta']) {
       : typeof value === 'object'
         ? JSON.stringify(value)
         : String(value)
-    return [`${humanize(key)}: ${text}`]
+    return [`${META_LABELS[key] ?? humanize(key)}: ${text}`]
   })
   return parts.length > 0 ? parts.join(' · ') : null
 }

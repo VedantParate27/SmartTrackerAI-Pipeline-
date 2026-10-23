@@ -1,7 +1,8 @@
-import { Outlet, createFileRoute } from '@tanstack/react-router'
+import { Link, Outlet, createFileRoute } from '@tanstack/react-router'
 import AuthPanel from '#/components/AuthPanel'
 import { Callout } from '#/components/ui'
 import { signOut, useAuth } from '#/lib/auth'
+import { useNotificationFeed } from '#/lib/notifications'
 
 export const Route = createFileRoute('/cleaner')({ component: CleanerLayout })
 
@@ -11,6 +12,7 @@ const ALLOWED = ['cleaner', 'admin']
 function CleanerLayout() {
   const { session, hydrated } = useAuth()
   const allowed = session !== null && ALLOWED.includes(session.role)
+  const { unread } = useNotificationFeed(allowed ? session : null)
 
   if (!hydrated || !allowed) {
     return (
@@ -56,6 +58,31 @@ function CleanerLayout() {
           </button>
         </div>
       </div>
+
+      <nav aria-label="Field work" className="sub-nav mt-4">
+        <Link
+          to="/cleaner"
+          activeOptions={{ exact: true }}
+          className="nav-link shrink-0"
+          activeProps={{ className: 'nav-link is-active shrink-0' }}
+        >
+          My tasks
+        </Link>
+        <Link
+          to="/cleaner/notifications"
+          className="nav-link shrink-0"
+          activeProps={{ className: 'nav-link is-active shrink-0' }}
+        >
+          Notifications
+          {unread > 0 ? (
+            <span className="count-badge">
+              {unread}
+              <span className="sr-only"> unread</span>
+            </span>
+          ) : null}
+        </Link>
+      </nav>
+
       <div className="mt-5">
         <Outlet />
       </div>

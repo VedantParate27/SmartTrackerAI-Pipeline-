@@ -1,0 +1,109 @@
+{
+  "generated_at": "2026-10-21T22:20:13",
+  "data_type": "synthetic demonstration data",
+  "total_records": 300,
+  "location_summary": [
+    {
+      "location": "Kalyan-Dombivali",
+      "record_count": 118,
+      "percentage": 39.33
+    },
+    {
+      "location": "Dadar",
+      "record_count": 91,
+      "percentage": 30.33
+    },
+    {
+      "location": "Wadala",
+      "record_count": 91,
+      "percentage": 30.33
+    }
+  ],
+  "severity_distribution": {
+    "domestic": 173,
+    "moderate": 92,
+    "dump_scale": 35
+  },
+  "waste_type_distribution": {
+    "mixed": 49,
+    "e_waste": 60,
+    "sanitary": 53,
+    "dry": 50,
+    "hazardous": 43,
+    "wet": 45
+  },
+  "cleanup_time_estimates": [
+    {
+      "location": "Kalyan-Dombivali",
+      "severity": "domestic",
+      "records": 67,
+      "estimated_minutes": 14.8,
+      "based_on": "location+waste_type+severity",
+      "training_samples": 9
+    },
+    {
+      "location": "Kalyan-Dombivali",
+      "severity": "moderate",
+      "records": 42,
+      "estimated_minutes": 38.2,
+      "based_on": "location+waste_type+severity",
+      "training_samples": 9
+    },
+    {
+      "location": "Kalyan-Dombivali",
+      "severity": "dump_scale",
+      "records": 9,
+      "estimated_minutes": 114.1,
+      "based_on": "location+severity",
+      "training_samples": 9
+    },
+    {
+      "location": "Dadar",
+      "severity": "moderate",
+      "records": 27,
+      "estimated_minutes": 39.5,
+      "based_on": "location+waste_type+severity",
+      "training_samples": 5
+    },
+    {
+      "location": "Dadar",
+      "severity": "domestic",
+      "records": 51,
+      "estimated_minutes": 15.7,
+      "based_on": "location+waste_type+severity",
+      "training_samples": 13
+    },
+    {
+      "location": "Dadar",
+      "severity": "dump_scale",
+      "records": 13,
+      "estimated_minutes": 141.5,
+      "based_on": "location+severity",
+      "training_samples": 13
+    },
+    {
+      "location": "Wadala",
+      "severity": "domestic",
+      "records": 55,
+      "estimated_minutes": 17.0,
+      "based_on": "location+severity",
+      "training_samples": 55
+    },
+    {
+      "location": "Wadala",
+      "severity": "dump_scale",
+      "records": 13,
+      "estimated_minutes": 147.1,
+      "based_on": "location+severity",
+      "training_samples": 13
+    },
+    {
+      "location": "Wadala",
+      "severity": "moderate",
+      "records": 23,
+      "estimated_minutes": 50.9,
+      "based_on": "location+severity",
+      "training_samples": 23
+    }
+  ]
+}
