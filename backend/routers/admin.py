@@ -5,12 +5,25 @@
 #   PUT /admin/complaints/{complaint_id}     — update status/priority/department
 #   GET /admin/queue                         — admin complaint queue (frontend-compatible shape)
 #   POST /admin/responses/{id}/approve       — approve response and update status
+#
+# Tasks 1–5 additions:
+#   GET    /admin/locations                        — list all locations
+#   POST   /admin/locations                        — create a new location
+#   GET    /admin/locations/statistics             — location-wise statistics (all locations)
+#   GET    /admin/locations/{location_id}/statistics — location-wise statistics (one location)
+#   GET    /admin/locations/{location_id}          — get a single location
+#   PUT    /admin/locations/{location_id}          — update name / is_active
+#   DELETE /admin/locations/{location_id}          — deactivate a location (soft delete)
+#   PATCH  /admin/complaints/{complaint_id}/location — set/clear location_id on a complaint
+#   GET    /admin/locations/{location_id}/stats    — DEPRECATED alias of .../statistics
+#   GET    /admin/locations/stats/all              — DEPRECATED alias of /locations/statistics
 
 import json
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func, update
 
 # Our own modules
 from database import get_db
@@ -25,6 +38,8 @@ from models import (
     utcnow,
     AIOutput,
     AICorrection,
+    Location,
+    cleaner_locations,
 )
 from schemas import (
     AdminComplaintUpdateRequest, 
@@ -47,10 +62,16 @@ from schemas import (
     CleanupTaskHandoff,
     ProofReviewItem,
     WasteAIResultResponse,
+    LocationCreateRequest,
+    LocationUpdateRequest,
+    LocationResponse,
+    SetComplaintLocationRequest,
+    LocationStats,
 )
 
 from routers.complaints import get_current_user, get_current_admin_user, _latest_ai_result
 from routers.eventlog import log_event
+from task_timeline import first_proof_uploaded_at
 from taxonomy import compute_priority
 
 # ---------------------------------------------------------------------------
@@ -79,6 +100,609 @@ def validate_status_transition(current_status: str, next_status: str):
 # ROUTER
 # ---------------------------------------------------------------------------
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+# ===========================================================================
+# TASK 1 — LOCATION MANAGEMENT CRUD
+# ===========================================================================
+
+def _location_to_response(loc: Location) -> LocationResponse:
+    return LocationResponse.model_validate(loc)
+
+
+@router.get(
+    "/locations",
+    response_model=List[LocationResponse],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] List all locations",
+)
+def list_locations(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Return all locations (active and inactive), ordered by name."""
+    locations = db.query(Location).order_by(Location.name.asc()).all()
+    return [_location_to_response(loc) for loc in locations]
+
+
+@router.post(
+    "/locations",
+    response_model=LocationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="[Admin] Create a new location",
+)
+def create_location(
+    body: LocationCreateRequest,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Create a new location. Slug must be globally unique."""
+    existing = db.query(Location).filter(Location.slug == body.slug).first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A location with slug '{body.slug}' already exists.",
+        )
+    loc = Location(name=body.name, slug=body.slug, is_active=True)
+    db.add(loc)
+    try:
+        db.commit()
+        db.refresh(loc)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create location.",
+        )
+    return _location_to_response(loc)
+
+
+# ===========================================================================
+# TASK 5 — LOCATION-WISE STATISTICS
+# ===========================================================================
+# Canonical paths:
+#   GET /admin/locations/statistics              — every location (active + inactive)
+#   GET /admin/locations/{location_id}/statistics — one location
+#
+# ROUTE ORDERING: "/locations/statistics" is registered BEFORE
+# "/locations/{location_id}". FastAPI matches routes in registration order, so
+# the literal path must come first — otherwise the CRUD read route captures
+# "/locations/statistics" and fails int parsing with HTTP 422.
+#
+# Every count is produced by its own grouped query (see _location_statistics)
+# and uses COUNT(DISTINCT ...), so a task carrying several proof records can
+# never multiply a task or complaint count.
+def _location_statistics(db: Session, locations: List[Location]) -> List[LocationStats]:
+    """Compute the statistics for the given locations.
+
+    One independent grouped query per metric. Complaints without a location
+    belong to no location and are excluded from every total. Locations are
+    returned in the order given, including inactive ones.
+    """
+    location_ids = [loc.id for loc in locations]
+    if not location_ids:
+        return []
+
+    # --- complaints linked to a location -----------------------------------
+    complaint_counts = dict(
+        db.query(Complaint.location_id, func.count(func.distinct(Complaint.id)))
+        .filter(Complaint.location_id.in_(location_ids))
+        .group_by(Complaint.location_id)
+        .all()
+    )
+    resolved_counts = dict(
+        db.query(Complaint.location_id, func.count(func.distinct(Complaint.id)))
+        .filter(Complaint.location_id.in_(location_ids))
+        .filter(Complaint.status.in_(["resolved", "closed"]))
+        .group_by(Complaint.location_id)
+        .all()
+    )
+
+    # --- cleanup tasks (1:1 with the complaint via complaint_id) -----------
+    task_assigned_counts = dict(
+        db.query(Complaint.location_id, func.count(func.distinct(CleanupTask.id)))
+        .join(Complaint, CleanupTask.complaint_id == Complaint.id)
+        .filter(Complaint.location_id.in_(location_ids))
+        .filter(CleanupTask.assigned_cleaner_id.isnot(None))
+        .group_by(Complaint.location_id)
+        .all()
+    )
+    task_verified_counts = dict(
+        db.query(Complaint.location_id, func.count(func.distinct(CleanupTask.id)))
+        .join(Complaint, CleanupTask.complaint_id == Complaint.id)
+        .filter(Complaint.location_id.in_(location_ids))
+        .filter(CleanupTask.status == "verified")
+        .filter(CleanupTask.completed_at.isnot(None))
+        .group_by(Complaint.location_id)
+        .all()
+    )
+
+    # --- proof records (one task may carry several proofs) -----------------
+    proof_submitted_counts = dict(
+        db.query(Complaint.location_id, func.count(func.distinct(CleanupProof.id)))
+        .join(CleanupTask, CleanupProof.task_id == CleanupTask.id)
+        .join(Complaint, CleanupTask.complaint_id == Complaint.id)
+        .filter(Complaint.location_id.in_(location_ids))
+        .group_by(Complaint.location_id)
+        .all()
+    )
+    # Authoritative human verification only: status 'verified' AND a human
+    # verifier AND a verification timestamp. A submitted-but-unverified proof
+    # is not verified collection, and a 'verified' row without a human
+    # verifier (system-seeded research data) is not authoritative evidence.
+    proof_verified_counts = dict(
+        db.query(Complaint.location_id, func.count(func.distinct(CleanupProof.id)))
+        .join(CleanupTask, CleanupProof.task_id == CleanupTask.id)
+        .join(Complaint, CleanupTask.complaint_id == Complaint.id)
+        .filter(Complaint.location_id.in_(location_ids))
+        .filter(CleanupProof.verification_status == "verified")
+        .filter(CleanupProof.verified_by.isnot(None))
+        .filter(CleanupProof.verified_at.isnot(None))
+        .group_by(Complaint.location_id)
+        .all()
+    )
+
+    stats: List[LocationStats] = []
+    for loc in locations:
+        complaints_reported = complaint_counts.get(loc.id, 0)
+        resolved = resolved_counts.get(loc.id, 0)
+        stats.append(
+            LocationStats(
+                location_id=loc.id,
+                location_name=loc.name,
+                location_slug=loc.slug,
+                is_active=loc.is_active,
+                complaints_reported=complaints_reported,
+                tasks_assigned=task_assigned_counts.get(loc.id, 0),
+                tasks_verified=task_verified_counts.get(loc.id, 0),
+                proofs_submitted=proof_submitted_counts.get(loc.id, 0),
+                proofs_verified=proof_verified_counts.get(loc.id, 0),
+                open_complaints=complaints_reported - resolved,
+                resolved_complaints=resolved,
+            )
+        )
+    return stats
+
+
+@router.get(
+    "/locations/statistics",
+    response_model=List[LocationStats],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Location-wise statistics for every location",
+)
+def list_location_statistics(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Return the statistics of every location, ordered by name.
+
+    Inactive locations are included so that historical statistics stay
+    visible after a location is deactivated.
+    """
+    locations = db.query(Location).order_by(Location.name.asc()).all()
+    return _location_statistics(db, locations)
+
+
+@router.get(
+    "/locations/{location_id}/statistics",
+    response_model=LocationStats,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Statistics for a single location",
+)
+def get_location_statistics(
+    location_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Return the statistics of one location.
+
+    - complaints_reported counts distinct complaints linked to the location;
+      complaints without a location are never attributed to one.
+    - tasks_verified requires status='verified' AND a non-null completed_at.
+    - proofs_verified requires authoritative human verification evidence
+      (verified status + verified_by + verified_at).
+    """
+    loc = db.query(Location).filter(Location.id == location_id).first()
+    if loc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found.",
+        )
+    return _location_statistics(db, [loc])[0]
+
+
+@router.get(
+    "/locations/{location_id}",
+    response_model=LocationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Get a single location by ID",
+)
+def get_location(
+    location_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Return the location record for the given ID."""
+    loc = db.query(Location).filter(Location.id == location_id).first()
+    if loc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found.",
+        )
+    return _location_to_response(loc)
+
+
+@router.put(
+    "/locations/{location_id}",
+    response_model=LocationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Update a location's name or active status",
+)
+def update_location(
+    location_id: int,
+    body: LocationUpdateRequest,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Update the name and/or is_active flag on an existing location.
+
+    Re-activating a deactivated location is allowed; reactivation does NOT
+    automatically restore cleaner permissions that were revoked when it was
+    deactivated — those must be re-granted explicitly.
+    """
+    loc = db.query(Location).filter(Location.id == location_id).first()
+    if loc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found.",
+        )
+    if body.name is not None:
+        loc.name = body.name
+    if body.is_active is not None:
+        loc.is_active = body.is_active
+    try:
+        db.commit()
+        db.refresh(loc)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update location.",
+        )
+    return _location_to_response(loc)
+
+
+@router.delete(
+    "/locations/{location_id}",
+    response_model=LocationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Deactivate a location (soft delete)",
+)
+def deactivate_location(
+    location_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Soft-delete: sets is_active=False.
+
+    - Already-inactive locations are returned without error (idempotent).
+    - Existing complaints that reference this location are preserved as-is;
+      new assignments to those complaints will be rejected by the existing
+      cleaner-authorization check (inactive location → HTTP 400).
+    """
+    loc = db.query(Location).filter(Location.id == location_id).first()
+    if loc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found.",
+        )
+    if loc.is_active:
+        loc.is_active = False
+        try:
+            db.commit()
+            db.refresh(loc)
+        except Exception:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to deactivate location.",
+            )
+    return _location_to_response(loc)
+
+
+# ===========================================================================
+# TASK 2 — COMPLAINT-LOCATION INTEGRATION
+# ===========================================================================
+
+@router.patch(
+    "/complaints/{complaint_id}/location",
+    response_model=ComplaintResponse,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Set or clear the location_id on a complaint",
+)
+def set_complaint_location(
+    complaint_id: int,
+    body: SetComplaintLocationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Explicitly link (or unlink) a complaint to a location.
+
+    Rules:
+    - location_id=null → clears the location link (backward compat; complaint is
+      still accessible and assignable without location enforcement). Clearing
+      only relaxes the location rules, so it never needs a location grant.
+    - location_id=<id> → the target location must exist (404) AND be active
+      (400). A complaint is never pointed at a location that can no longer
+      be worked in.
+    - When the complaint already has a cleanup task with an assigned cleaner,
+      that cleaner must hold an ACTIVE grant for the requested location
+      (403 otherwise). Without this check a location change would silently
+      lock the assigned cleaner out of the task they are already working on:
+      the cleaner endpoints refuse any task whose complaint carries a
+      location outside the cleaner's active grants.
+    - This endpoint never infers a location from coordinates or address_text,
+      never changes an assignment, and never grants a permission by itself.
+    """
+    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
+    if complaint is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Complaint not found.",
+        )
+
+    if body.location_id is not None:
+        loc = db.query(Location).filter(Location.id == body.location_id).first()
+        if loc is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Location not found.",
+            )
+        if not loc.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Location is not active.",
+            )
+
+        # The cleaner already working on this complaint must be allowed to
+        # work in the requested location, otherwise the change would leave
+        # them unable to act on the task they are assigned to.
+        task = (
+            db.query(CleanupTask)
+            .filter(CleanupTask.complaint_id == complaint.id)
+            .first()
+        )
+        if task is not None and task.assigned_cleaner_id is not None:
+            permission = db.execute(
+                cleaner_locations.select().where(
+                    cleaner_locations.c.cleaner_id == task.assigned_cleaner_id,
+                    cleaner_locations.c.location_id == body.location_id,
+                    cleaner_locations.c.is_active.is_(True),
+                )
+            ).first()
+            if permission is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "The cleaner assigned to this complaint is not "
+                        "permitted to work in the requested location."
+                    ),
+                )
+
+    old_location_id = complaint.location_id
+    complaint.location_id = body.location_id
+
+    log_event(
+        db,
+        case_id=complaint.tracking_id,
+        activity="complaint_updated",
+        actor_id=current_user.id,
+        actor_role="admin",
+        old_value=str(old_location_id) if old_location_id is not None else None,
+        new_value=str(body.location_id) if body.location_id is not None else None,
+        meta={"field": "location_id"},
+    )
+
+    try:
+        db.commit()
+        db.refresh(complaint)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update complaint location.",
+        )
+    return complaint
+
+
+# ===========================================================================
+# TASK 5 — LEGACY STATISTICS ALIASES (deprecated)
+# ===========================================================================
+# The canonical paths are GET /admin/locations/statistics and
+# GET /admin/locations/{location_id}/statistics (see the statistics section
+# above). These two aliases are kept so existing callers keep working; they
+# serve exactly the same handlers and return exactly the same payload.
+
+@router.get(
+    "/locations/{location_id}/stats",
+    response_model=LocationStats,
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] (Deprecated) Per-location operational statistics",
+    deprecated=True,
+)
+def get_location_stats(
+    location_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Deprecated alias for GET /admin/locations/{location_id}/statistics."""
+    return get_location_statistics(location_id, db=db, _current_user=_current_user)
+
+
+@router.get(
+    "/locations/stats/all",
+    response_model=List[LocationStats],
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] (Deprecated) Per-location statistics for all locations",
+    deprecated=True,
+)
+def get_all_location_stats(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Deprecated alias for GET /admin/locations/statistics."""
+    return list_location_statistics(db=db, _current_user=_current_user)
+
+
+# ===========================================================================
+# EXISTING LOCATION-PERMISSION HELPERS (unchanged)
+# ===========================================================================
+
+def _location_permission_response(cleaner_id: int, location: Location, is_active: bool) -> dict:
+    return {
+        "cleaner_id": cleaner_id,
+        "location_id": location.id,
+        "location_slug": location.slug,
+        "is_active": is_active,
+    }
+
+
+@router.post(
+    "/cleaners/{cleaner_id}/locations/{location_id}",
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Grant a cleaner permission for a location",
+)
+def grant_cleaner_location(
+    cleaner_id: int,
+    location_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Grant or restore a cleaner's permission for an active location."""
+    cleaner = db.query(User).filter(User.id == cleaner_id).first()
+    if cleaner is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cleaner not found.",
+        )
+    if cleaner.role != "cleaner":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Location permissions can only be granted to cleaners.",
+        )
+
+    location = db.query(Location).filter(Location.id == location_id).first()
+    if location is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found.",
+        )
+    if not location.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive locations cannot be granted.",
+        )
+
+    permission = db.execute(
+        cleaner_locations.select().where(
+            cleaner_locations.c.cleaner_id == cleaner_id,
+            cleaner_locations.c.location_id == location_id,
+        )
+    ).first()
+    if permission is None:
+        db.execute(
+            cleaner_locations.insert().values(
+                cleaner_id=cleaner_id,
+                location_id=location_id,
+                is_active=True,
+            )
+        )
+    elif not permission.is_active:
+        db.execute(
+            update(cleaner_locations)
+            .where(
+                cleaner_locations.c.cleaner_id == cleaner_id,
+                cleaner_locations.c.location_id == location_id,
+            )
+            .values(is_active=True)
+        )
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to grant cleaner location permission.",
+        )
+
+    return _location_permission_response(cleaner_id, location, True)
+
+
+@router.delete(
+    "/cleaners/{cleaner_id}/locations/{location_id}",
+    status_code=status.HTTP_200_OK,
+    summary="[Admin] Revoke a cleaner's permission for a location",
+)
+def revoke_cleaner_location(
+    cleaner_id: int,
+    location_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Revoke a cleaner's permission without deleting its audit row."""
+    cleaner = db.query(User).filter(User.id == cleaner_id).first()
+    if cleaner is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cleaner not found.",
+        )
+    if cleaner.role != "cleaner":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Location permissions can only be revoked from cleaners.",
+        )
+
+    location = db.query(Location).filter(Location.id == location_id).first()
+    if location is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found.",
+        )
+
+    permission = db.execute(
+        cleaner_locations.select().where(
+            cleaner_locations.c.cleaner_id == cleaner_id,
+            cleaner_locations.c.location_id == location_id,
+        )
+    ).first()
+    if permission is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cleaner location permission not found.",
+        )
+
+    if not permission.is_active:
+        return _location_permission_response(cleaner_id, location, False)
+
+    db.execute(
+        update(cleaner_locations)
+        .where(
+            cleaner_locations.c.cleaner_id == cleaner_id,
+            cleaner_locations.c.location_id == location_id,
+        )
+        .values(is_active=False)
+    )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke cleaner location permission.",
+        )
+
+    return _location_permission_response(cleaner_id, location, False)
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +1195,35 @@ def assign_cleaner(
             detail="Only users with role 'cleaner' can be assigned to cleanup tasks.",
         )
 
+    if complaint.location_id is not None:
+        location = (
+            db.query(Location)
+            .filter(
+                Location.id == complaint.location_id,
+                Location.is_active.is_(True),
+            )
+            .first()
+        )
+        if location is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Complaint location is missing or inactive.",
+            )
+
+        permission = db.execute(
+            cleaner_locations.select().where(
+                cleaner_locations.c.cleaner_id == cleaner.id,
+                cleaner_locations.c.location_id == complaint.location_id,
+                cleaner_locations.c.is_active.is_(True),
+            )
+        ).first()
+        if permission is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cleaner is not permitted to work in the complaint location.",
+            )
+    # Legacy complaints without location_id remain assignable without
+    # inferring a location or granting a new cleaner permission.
 
     task = db.query(CleanupTask).filter(CleanupTask.complaint_id == complaint.id).first()
     is_reassignment = task is not None and task.assigned_cleaner_id not in (None, cleaner.id)
@@ -1038,7 +1691,12 @@ def get_task_proof_review(
         "task_status": task.status,
         "task_assigned_cleaner_id": task.assigned_cleaner_id,
         "assigned_at": task.assigned_at,
+        # started_at: when the cleaner genuinely started the work (once).
+        "started_at": task.started_at,
+        # completed_at: the ADMIN-verification timestamp, not a physical finish.
         "completed_at": task.completed_at,
+        # Derived from the append-only proof history; never overwritten.
+        "first_proof_uploaded_at": first_proof_uploaded_at(task.proofs),
         "complaint_id": complaint.id,
         "tracking_id": complaint.tracking_id,
         "complaint_text": complaint.complaint_text,
@@ -1048,4 +1706,3 @@ def get_task_proof_review(
         "address_text": complaint.address_text,
         "proofs": [_proof_review_item(p) for p in task.proofs],
     }
-

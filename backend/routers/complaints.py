@@ -26,7 +26,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # Our own modules
 from database import get_db
-from models import Complaint, User, WasteAIResult
+from models import Complaint, Location, User, WasteAIResult
 from routers.auth import ALGORITHM, SECRET_KEY
 from schemas import ComplaintResponse, CreateComplaintRequest
 from taxonomy import compute_priority
@@ -189,6 +189,12 @@ def create_complaint(
     """
     Submit a new complaint on behalf of the authenticated user.
     Supports optional waste management classification and location fields.
+
+    `location_id` is an explicit reference to the Location where the waste was
+    found. It is optional: omitted or null keeps the legacy behaviour (a
+    location-less complaint) and is never inferred from the citizen's address,
+    coordinates, or account details. A supplied location must exist and be
+    active, otherwise the request is rejected (404 / 400).
     """
 
     # Derive priority from structured triage inputs when provided; the fixed
@@ -197,6 +203,30 @@ def create_complaint(
     derived_priority = compute_priority(
         body.quantity_severity, body.waste_type, body.intervention_required
     )
+
+    # --- Explicit waste location (optional) -------------------------------
+    # The submitter states where the waste was ACTUALLY FOUND by referencing a
+    # Location record. Nothing is ever inferred from latitude, longitude,
+    # address_text, or the citizen's account — a location that was not stated
+    # simply stays null. A stated location must exist and still be active;
+    # inactive locations are not offered for new complaints.
+    location_id = body.location_id
+    if location_id is not None:
+        location = (
+            db.query(Location)
+            .filter(Location.id == location_id)
+            .first()
+        )
+        if location is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Location not found.",
+            )
+        if not location.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Location is not active.",
+            )
 
     new_complaint = Complaint(
         user_id=current_user.id,
@@ -212,6 +242,7 @@ def create_complaint(
         latitude=body.latitude,
         longitude=body.longitude,
         address_text=body.address_text,
+        location_id=location_id,
         status="pending",
         priority=derived_priority,
         source="citizen",
@@ -237,6 +268,7 @@ def create_complaint(
             "waste_type": body.waste_type,
             "quantity_severity": body.quantity_severity,
             "intervention_required": body.intervention_required,
+            "location_id": location_id,
         },
     )
 

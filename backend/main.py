@@ -66,7 +66,8 @@ allowed_origins = [
     origin.strip()
     for origin in os.getenv(
         "SMARTTRACKER_CORS_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000",
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:3002,http://127.0.0.1:3002",
     ).split(",")
     if origin.strip()
 ]
@@ -105,5 +106,4 @@ def home():
 def health():
     """Small readiness endpoint used by local tooling and deployments."""
     return {"status": "ok"}
-
 

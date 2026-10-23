@@ -43,7 +43,7 @@ def ingest_waste_guidelines(folder):
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         for i, para in enumerate(paragraphs):
             embedding = embedder.encode(para).tolist()
-            waste_collection.add(
+            waste_collection.upsert(
                 ids=[f"{fname}_{i}"],
                 embeddings=[embedding],
                 documents=[para],

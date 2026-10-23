@@ -67,8 +67,18 @@ def process_waste_image(
     # --- Step 2: If the image isn't usable, stop here and escalate for a human to look ---
     if not result["image_usable"]:
         result["needs_human_review"] = True
-        result["review_reasons"].append(f"unusable_image: {result['unusable_reason']}")
-        return result
+        result["review_reasons"].append(
+            f"unusable_image: {result['unusable_reason']}"
+        )
+
+    if prior_reports_at_location >= RECURRING_REPORT_THRESHOLD:
+        result["recurring_flag"] = True
+        result["escalate_to_authority"] = True
+        result["review_reasons"].append(
+            f"recurring_location: {prior_reports_at_location} prior reports"
+        )
+
+    return result
 
     # --- Step 3: Check confidence on both judgments ---
     low_waste_type_conf = result["waste_type_confidence"] < WASTE_CONFIDENCE_THRESHOLD
