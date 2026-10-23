@@ -13,7 +13,6 @@ reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 collection = client.get_collection("policies")
 
-
 def vector_search(query, department, top_k=3):
     """
     Semantic search: finds chunks whose MEANING is closest to the query,

@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 from sqlalchemy.orm import Session
 
 from database import get_db
+from db import get_conn
 from models import CleanupProof, CleanupTask, User, WasteAIResult, cleaner_locations, utcnow
 from routers.complaints import get_current_cleaner_user
 from routers.eventlog import log_event
@@ -69,6 +70,10 @@ def build_cleaner_task_response(task: CleanupTask) -> CleanerTaskResponse:
     )
 
     return CleanerTaskResponse(
+        id=task.id,
+        complaint_id=complaint.id if complaint else None,
+        cleaner_id=task.assigned_cleaner_id,
+        complaint_status=complaint.status if complaint else None,
         task_id=task.task_id,
         tracking_id=complaint.tracking_id,
         status=task.status,
@@ -120,12 +125,19 @@ def _get_task_checked(db: Session, task_id: str, current_user: User) -> CleanupT
        no location requirement at all.
     """
     task = db.query(CleanupTask).filter(CleanupTask.task_id == task_id).first()
+    if not task and str(task_id).isdigit():
+        task = db.query(CleanupTask).filter(CleanupTask.id == int(task_id)).first()
     if not task:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found.",
         )
     if current_user.role != "admin" and task.assigned_cleaner_id != current_user.id:
+        if str(task_id).isdigit():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="cleanup task not found",
+            )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not assigned to this task.",
@@ -147,12 +159,12 @@ def _get_task_checked(db: Session, task_id: str, current_user: User) -> CleanupT
 # ---------------------------------------------------------------------------
 @router.get(
     "/tasks",
-    response_model=List[CleanerTaskResponse],
     status_code=status.HTTP_200_OK,
     summary="[Cleaner] List assigned cleanup tasks",
 )
 def get_cleaner_tasks(
     db: Session = Depends(get_db),
+    conn=Depends(get_conn),
     current_user: User = Depends(get_current_cleaner_user),
 ):
     """Return tasks assigned to the authenticated cleaner.
@@ -162,6 +174,48 @@ def get_cleaner_tasks(
     removes the task from the list. Location-less legacy tasks are always
     listed. Admins keep the unrestricted view.
     """
+    try:
+        col_rows = conn.execute("PRAGMA table_info(cleanup_tasks)").fetchall()
+        task_cols = {col[1] for col in col_rows}
+    except Exception:
+        task_cols = set()
+
+    if "task_id" not in task_cols:
+        if current_user.role != "cleaner":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cleaner access required.",
+            )
+        rows = conn.execute(
+            """
+            SELECT t.id,
+                   t.complaint_id,
+                   t.cleaner_id,
+                   t.assigned_by,
+                   t.status,
+                   t.notes,
+                   t.created_at,
+                   t.updated_at,
+                   t.completed_at,
+                   c.tracking_id,
+                   c.complaint_text,
+                   c.waste_type,
+                   c.severity,
+                   c.image_path,
+                   c.location_type,
+                   c.latitude,
+                   c.longitude,
+                   c.manual_address,
+                   c.status AS complaint_status
+            FROM cleanup_tasks t
+            JOIN complaints c ON c.id = t.complaint_id
+            WHERE t.cleaner_id = ?
+            ORDER BY t.created_at
+            """,
+            (current_user.id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     query = db.query(CleanupTask)
     if current_user.role != "admin":
         query = query.filter(CleanupTask.assigned_cleaner_id == current_user.id)

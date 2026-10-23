@@ -1021,47 +1021,11 @@ def _save_cleanup_proof_image(image_bytes: bytes, mime_type: str) -> str:
 
 
 # ---------- cleaner: task lifecycle ----------
-
-@app.get("/cleaner/tasks")
-def list_cleaner_tasks(
-    current_user=Depends(get_current_user),
-    conn=Depends(get_conn),
-):
-    require_role(current_user, "cleaner")
-
-    rows = conn.execute(
-        """
-        SELECT t.id,
-               t.complaint_id,
-               t.cleaner_id,
-               t.assigned_by,
-               t.status,
-               t.notes,
-               t.created_at,
-               t.updated_at,
-               t.completed_at,
-               c.tracking_id,
-               c.complaint_text,
-               c.waste_type,
-               c.severity,
-               c.image_path,
-               c.location_type,
-               c.latitude,
-               c.longitude,
-               c.manual_address,
-               c.status AS complaint_status
-        FROM cleanup_tasks t
-        JOIN complaints c ON c.id = t.complaint_id
-        WHERE t.cleaner_id = ?
-        ORDER BY t.created_at
-        """,
-        (current_user["id"],),
-    ).fetchall()
-
-    return [dict(r) for r in rows]
+# (GET /cleaner/tasks and POST /cleaner/tasks/{task_id}/start are handled by cleaner_router)
 
 
-@app.post("/cleaner/tasks/{task_id}/start")
+
+@app.post("/cleaner/tasks/{task_id:int}/start")
 def start_cleanup_task(
     task_id: int,
     current_user=Depends(get_current_user),
@@ -1140,7 +1104,7 @@ def start_cleanup_task(
 
 
 
-@app.post("/cleaner/tasks/{task_id}/proof")
+@app.post("/cleaner/tasks/{task_id:int}/proof")
 async def upload_cleanup_proof(
     task_id: int,
     image: UploadFile = File(...),
@@ -1715,3 +1679,23 @@ def admin_analytics_time_estimates(
         "total_records": 0,
         "cleanup_time_estimates": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Modular router inclusions
+# ---------------------------------------------------------------------------
+from routers import admin as admin_router
+from routers import cleaner as cleaner_router
+from routers import app_state as app_state_router
+from routers import complaints as complaints_router
+from routers import eventlog as eventlog_router
+from routers import mining as mining_router
+import triage as triage_router
+
+app.include_router(admin_router.router)
+app.include_router(cleaner_router.router)
+app.include_router(app_state_router.router)
+app.include_router(complaints_router.router)
+app.include_router(eventlog_router.router)
+app.include_router(mining_router.router)
+app.include_router(triage_router.router)

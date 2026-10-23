@@ -454,7 +454,11 @@ class AssignCleanerRequest(BaseModel):
     notes: Optional[str] = Field(default=None, description="Optional notes or instructions for cleaner")
 
 class AssignCleanerResponse(BaseModel):
+    id: Optional[int] = None
     task_id: str
+    complaint_id: Optional[int] = None
+    cleaner_id: Optional[int] = None
+    complaint_status: Optional[str] = None
     tracking_id: str
     assigned_cleaner_id: Optional[int]
     cleaner_name: Optional[str]
@@ -484,7 +488,11 @@ class CleanupProofResponse(BaseModel):
         return str(value)
 
 class CleanerTaskResponse(BaseModel):
+    id: Optional[int] = None
     task_id: str
+    complaint_id: Optional[int] = None
+    cleaner_id: Optional[int] = None
+    complaint_status: Optional[str] = None
     tracking_id: str
     status: str
     assigned_at: str
@@ -537,7 +545,11 @@ class VerifyProofRequest(BaseModel):
 
 class VerifyProofResult(BaseModel):
     proof_id: int
+    id: Optional[int] = None
     task_id: str
+    complaint_id: Optional[int] = None
+    cleaner_id: Optional[int] = None
+    complaint_status: Optional[str] = None
     tracking_id: str
     verification_status: str
     task_status: str
@@ -852,7 +864,11 @@ class AdminAIReviewResponse(BaseModel):
 class CleanupTaskHandoff(BaseModel):
     """CleanupTask state after an assign_cleaner decision (handoff only)."""
 
+    id: Optional[int] = None
     task_id: str
+    complaint_id: Optional[int] = None
+    cleaner_id: Optional[int] = None
+    complaint_status: Optional[str] = None
     status: str
     assigned_cleaner_id: Optional[int] = None
 
@@ -995,7 +1011,11 @@ class ProofReviewItem(BaseModel):
 class AdminProofReviewResponse(BaseModel):
     """Admin review view: complaint + task + full proof history for one task."""
 
+    id: Optional[int] = None
     task_id: str
+    complaint_id: Optional[int] = None
+    cleaner_id: Optional[int] = None
+    complaint_status: Optional[str] = None
     task_status: str
     task_assigned_cleaner_id: Optional[int] = None
     assigned_at: str

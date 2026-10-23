@@ -9,7 +9,27 @@ import time
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=ENV_PATH)
-client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+import os
+from google import genai
+
+_client = None
+
+
+def get_gemini_client():
+    """Initialize Gemini only when it is actually needed."""
+    global _client
+
+    if _client is None:
+        api_key = os.getenv("GOOGLE_API_KEY")
+
+        if not api_key:
+            raise RuntimeError(
+                "GOOGLE_API_KEY is required for AI classification."
+            )
+
+        _client = genai.Client(api_key=api_key)
+
+    return _client
 
 
 # --- STEP A: Define the exact shape of a classification result ---
@@ -98,7 +118,7 @@ def classify_complaint(text: str) -> dict:
     for attempt in range(MAX_RETRY_CYCLES):
         for model_name in MODELS_TO_TRY:
             try:
-                response = client.models.generate_content(
+                get_gemini_client().models.generate_content(
                     model=model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(

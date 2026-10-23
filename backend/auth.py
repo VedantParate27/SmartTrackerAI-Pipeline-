@@ -137,9 +137,10 @@ def register_user(conn: sqlite3.Connection, body: RegisterRequest) -> RegisterRe
         )
 
     hashed = hash_password(body.password)
+    now = datetime.now(timezone.utc).isoformat()
     cur = conn.execute(
-        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'citizen')",
-        (body.name.strip(), normalized_email, hashed),
+        "INSERT INTO users (name, email, password_hash, role, created_at) VALUES (?, ?, ?, 'citizen', ?)",
+        (body.name.strip(), normalized_email, hashed, now),
     )
     conn.commit()
     user_id = cur.lastrowid
