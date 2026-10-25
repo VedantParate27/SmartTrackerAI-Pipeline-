@@ -163,20 +163,22 @@ function CleanerPortalPage() {
                     <div className="mt-2 text-xs muted">
                       <span className="kicker">Location</span>
                       <p className="m-0">
-                        {task.location_type === 'gps'
-                          ? `GPS (${task.latitude?.toFixed(4)}, ${task.longitude?.toFixed(4)})`
-                          : task.manual_address ?? 'Not specified'}
+                        {task.manual_address || task.address_text
+                          ? (task.manual_address || task.address_text)
+                          : (task.latitude != null && task.longitude != null)
+                            ? `GPS (${task.latitude.toFixed(4)}, ${task.longitude.toFixed(4)})`
+                            : (task.location_display ?? 'Location not available')}
                       </p>
                     </div>
                   </div>
 
                   <div>
-                    {task.image_path ? (
+                    {(task.image_path || task.image_url) ? (
                       <div>
                         <span className="kicker">Initial Waste Image</span>
                         <div className="mt-1 rounded overflow-hidden border border-(--line) max-w-xs">
                           <img
-                            src={getBackendImageUrl(task.image_path) ?? undefined}
+                            src={getBackendImageUrl(task.image_path || task.image_url) ?? undefined}
                             alt="Initial waste complaint"
                             className="w-full h-auto max-h-36 object-cover"
                           />
@@ -224,11 +226,13 @@ function CleanerPortalPage() {
                     <div className="w-full bg-(--ok-surface) p-3 rounded-lg text-xs space-y-1">
                       <p className="font-bold text-(--ok-fg)">AI Cleanup Verification Result</p>
                       <p>Task status: {proofResult.task_status} | Complaint status: {proofResult.complaint_status}</p>
-                      <p>
-                        Usable: {proofResult.ai_verification.after_image_usable ? 'Yes' : 'No'} |
-                        Clean: {proofResult.ai_verification.cleanup_appears_complete ? 'Yes' : 'No'} |
-                        Confidence: {(proofResult.ai_verification.confidence * 100).toFixed(0)}%
-                      </p>
+                      {proofResult.ai_verification ? (
+                        <p>
+                          Usable: {proofResult.ai_verification.after_image_usable ? 'Yes' : 'No'} |
+                          Clean: {proofResult.ai_verification.cleanup_appears_complete ? 'Yes' : 'No'} |
+                          Confidence: {proofResult.ai_verification.confidence != null ? `${(proofResult.ai_verification.confidence * 100).toFixed(0)}%` : 'N/A'}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

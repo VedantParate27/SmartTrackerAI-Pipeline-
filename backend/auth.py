@@ -19,7 +19,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
 
-from db import get_conn
+from backend.db import get_conn
 
 # ---------------------------------------------------------------------------
 # Config

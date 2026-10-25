@@ -4,13 +4,14 @@ import type {
   ExtractedEntity,
   CaseStatus,
   Priority,
+  PolicyDocument,
 } from './types'
 
 const envApiUrl = import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_API_URL
 export const API_BASE_URL = (
   envApiUrl && !envApiUrl.includes('PASTE_NEW_BACKEND_URL_HERE')
     ? envApiUrl
-    : 'http://10.108.147.119:8000'
+    : '/api'
 ).replace(/\/$/, '')
 
 const AUTH_TOKEN_KEY = 'smarttracker_auth_token'
@@ -86,6 +87,25 @@ export function getBackendImageUrl(
     relativePath.startsWith('http://') ||
     relativePath.startsWith('https://')
   ) {
+    if (
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      relativePath.startsWith('http://')
+    ) {
+      try {
+        const parsed = new URL(relativePath)
+        if (
+          parsed.hostname === window.location.hostname ||
+          parsed.hostname === 'localhost' ||
+          parsed.hostname === '127.0.0.1' ||
+          parsed.hostname === '10.108.147.119'
+        ) {
+          return `/api/${parsed.pathname.replace(/^\/+/, '')}${parsed.search}`
+        }
+      } catch {
+        // Fall back to original URL if URL parsing fails
+      }
+    }
     return relativePath
   }
 
@@ -193,23 +213,28 @@ export interface WasteReviewResponse {
 
 export interface CleanerTask {
   id: number
+  task_id?: string | null
   complaint_id: number
   cleaner_id: number
-  assigned_by: number
+  assigned_by?: number
+  assigned_at?: string | null
   status: string
   notes: string | null
-  created_at: string
-  updated_at: string
+  created_at?: string
+  updated_at?: string
   completed_at: string | null
   tracking_id: string
   complaint_text: string
   waste_type: string | null
   severity: string | null
   image_path: string | null
+  image_url?: string | null
   location_type: 'gps' | 'manual' | null
   latitude: number | null
   longitude: number | null
   manual_address: string | null
+  address_text?: string | null
+  location_display?: string | null
   complaint_status: string
 }
 
@@ -269,21 +294,31 @@ export interface CleanupVerificationResponse {
 }
 
 export interface AdminQueueItem {
-  id: number
-  user_id: number
-  complaint_text: string
-  category: string | null
-  department: string | null
-  confidence_score: number | null
-  extracted_entities: string | null
-  latitude: number | null
-  longitude: number | null
-  location_type: 'gps' | 'manual' | null
-  manual_address: string | null
+  id?: number | string
+  tracking_id?: string
+  user_id?: number
+  name?: string
+  email?: string
+  requester_name?: string
+  contact?: string
+  complaint_text?: string
+  text?: string
+  category?: string | null
+  department?: string | null
+  confidence_score?: number | null
+  extracted_entities?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  location_type?: 'gps' | 'manual' | null
+  manual_address?: string | null
+  address_text?: string | null
   status: string
-  created_at: string
+  priority?: string
+  language?: string
+  created_at?: string
+  submitted_at?: string
   updated_at: string
-  ai_draft_response: string
+  ai_draft_response?: string
 }
 
 /* ---------- HTTP Request Wrapper ---------- */
@@ -686,3 +721,66 @@ export async function verifyCleanupTask(
     },
   )
 }
+
+/* ---------- Policy Knowledge Base API ---------- */
+
+export interface PolicyIngestPayload {
+  title: string
+  owner: string
+  department: string
+  policyType?: string
+  jurisdiction?: string
+  version: string
+  effectiveDate: string
+  pages?: number
+  fileName?: string
+  supersedes?: string | null
+}
+
+export async function listPolicies(
+  filters?: { search?: string; department?: string; status?: string },
+  token?: string,
+  signal?: AbortSignal,
+): Promise<PolicyDocument[]> {
+  const params = new URLSearchParams()
+  if (filters?.search) params.set('search', filters.search)
+  if (filters?.department && filters.department !== 'All') params.set('department', filters.department)
+  if (filters?.status && filters.status !== 'All') params.set('status', filters.status)
+  const qs = params.toString() ? `?${params.toString()}` : ''
+  return request<PolicyDocument[]>(`/admin/policies${qs}`, {
+    headers: bearer(token),
+    signal,
+  })
+}
+
+export async function ingestPolicyDoc(
+  payload: PolicyIngestPayload,
+  token?: string,
+): Promise<PolicyDocument> {
+  return request<PolicyDocument>('/admin/policies', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: bearer(token),
+  })
+}
+
+export async function activatePolicyDoc(
+  policyId: string,
+  token?: string,
+): Promise<PolicyDocument> {
+  return request<PolicyDocument>(`/admin/policies/${encodeURIComponent(policyId)}/activate`, {
+    method: 'POST',
+    headers: bearer(token),
+  })
+}
+
+export async function retirePolicyDoc(
+  policyId: string,
+  token?: string,
+): Promise<PolicyDocument> {
+  return request<PolicyDocument>(`/admin/policies/${encodeURIComponent(policyId)}/retire`, {
+    method: 'POST',
+    headers: bearer(token),
+  })
+}
+

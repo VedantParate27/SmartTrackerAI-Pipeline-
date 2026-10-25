@@ -14,9 +14,31 @@ if str(BACKEND_DIR) not in sys.path:
 
 import pytest  # noqa: E402
 
-import geo  # noqa: E402
+from backend import geo  # noqa: E402
 from test_app_state import TestingSessionLocal  # noqa: E402
-from models import Complaint  # noqa: E402
+from backend.models import (  # noqa: E402
+    AICorrection,
+    AIOutput,
+    AdminDecision,
+    CleanupProof,
+    CleanupTask,
+    Complaint,
+    Response,
+    WasteAIResult,
+)
+
+
+def _cleanup_complaint_records(db):
+    """Delete complaints and all dependent child records, preserving users and locations."""
+    db.query(CleanupProof).delete()
+    db.query(CleanupTask).delete()
+    db.query(Response).delete()
+    db.query(WasteAIResult).delete()
+    db.query(AIOutput).delete()
+    db.query(AICorrection).delete()
+    db.query(AdminDecision).delete()
+    db.query(Complaint).delete()
+    db.commit()
 
 
 def _add_complaint(lat=None, lng=None, status="pending", email_suffix="") -> int:
@@ -41,12 +63,10 @@ def _add_complaint(lat=None, lng=None, status="pending", email_suffix="") -> int
 def _geo_isolation():
     """geo tests share the in-memory DB with other suites; start each test empty."""
     with TestingSessionLocal() as db:
-        db.query(Complaint).delete()
-        db.commit()
+        _cleanup_complaint_records(db)
     yield
     with TestingSessionLocal() as db:
-        db.query(Complaint).delete()
-        db.commit()
+        _cleanup_complaint_records(db)
 
 
 # ---------------------------------------------------------------------------

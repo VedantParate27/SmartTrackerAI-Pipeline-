@@ -26,7 +26,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from test_app_state import TestingSessionLocal, client, engine  # noqa: E402
 
-from models import CleanupProof, CleanupTask, Complaint, User, WasteAIResult  # noqa: E402
+from backend.models import CleanupProof, CleanupTask, Complaint, User, WasteAIResult  # noqa: E402
 
 # Step-6 proof uploads are magic-byte validated; test payloads use a real JPEG head.
 JPEG_HEAD = b"\xff\xd8\xff\xe0" + b"\x00" * 16
@@ -345,7 +345,7 @@ def test_existing_human_proof_verification_unaffected_by_ai_fields():
 # 7. Legacy-database migration adds the new table/columns idempotently
 # ---------------------------------------------------------------------------
 def test_migration_adds_waste_ai_table_and_proof_columns(tmp_path):
-    from database import run_migrations
+    from backend.database import run_migrations
 
     db_file = tmp_path / "legacy_waste_ai.db"
     legacy = sqlite3.connect(db_file)
@@ -399,7 +399,7 @@ def test_migration_adds_waste_ai_table_and_proof_columns(tmp_path):
     assert row.complaint_text == "legacy complaint"
 
     # new table accepts a row with a real FK after migration
-    from database import Base
+    from backend.database import Base
     Base.metadata.create_all(bind=legacy_engine)
     from sqlalchemy.orm import sessionmaker
     Session = sessionmaker(bind=legacy_engine)

@@ -9,10 +9,10 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from database import _create_database_engine, get_db, run_migrations  # noqa: E402
-from models import Complaint, Location, User, cleaner_locations  # noqa: E402
-from main import app  # noqa: E402
-from routers.auth import create_access_token  # noqa: E402
+from backend.database import _create_database_engine, get_db, run_migrations  # noqa: E402
+from backend.models import Complaint, Location, User, cleaner_locations  # noqa: E402
+from backend.main import app  # noqa: E402
+from backend.routers.auth import create_access_token  # noqa: E402
 
 
 @pytest.fixture

@@ -299,7 +299,7 @@ def _import_main_with_ai_stubbed():
     import importlib
 
     added = []
-    imported_here = "main" not in sys.modules
+    imported_here = "backend.main" not in sys.modules
     if imported_here:
 
         def refuse(name):
@@ -309,13 +309,13 @@ def _import_main_with_ai_stubbed():
             return _refuse
 
         stubs = {
-            "ai_pipeline": (
+            "backend.ai_pipeline": (
                 "classify_and_extract",
                 "generate_draft_response",
                 "entities_to_json",
+                "process_waste_image",
+                "verify_cleanup",
             ),
-            "waste_pipeline": ("process_waste_image",),
-            "cleanup_verifier": ("verify_cleanup",),
         }
         for module_name, names in stubs.items():
             if module_name in sys.modules:
@@ -326,7 +326,7 @@ def _import_main_with_ai_stubbed():
             sys.modules[module_name] = stub
             added.append(module_name)
 
-    main = importlib.import_module("main")
+    main = importlib.import_module("backend.main")
     assert Path(main.__file__).resolve().parent == BACKEND_DIR, (
         f"imported {main.__file__}, expected a module inside {BACKEND_DIR}"
     )
@@ -335,7 +335,7 @@ def _import_main_with_ai_stubbed():
         for module_name in added:
             sys.modules.pop(module_name, None)
         if imported_here:
-            sys.modules.pop("main", None)
+            sys.modules.pop("backend.main", None)
 
     return main, undo
 
@@ -356,8 +356,7 @@ def _expect(response, status_code):
 def env(tmp_path_factory):
     _assert_test_db_ready()
 
-    import auth
-    import db
+    from backend import auth, db
 
     assert TEST_DB.name == "smarttracker_test.db"
     assert TEST_DB.resolve() != Path(db.DB_PATH).resolve(), (
@@ -372,11 +371,33 @@ def env(tmp_path_factory):
     ai = FakeAI()
 
     previous_override = main.app.dependency_overrides.get(db.get_conn)
+    from backend.database import _create_database_engine, get_db
+    from sqlalchemy.orm import sessionmaker
+
+    test_engine = _create_database_engine(
+        f"sqlite:///{TEST_DB.resolve().as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    test_session_factory = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=test_engine,
+    )
+
+    def override_get_db():
+        session = test_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    previous_db_override = main.app.dependency_overrides.get(get_db)
     try:
         with pytest.MonkeyPatch.context() as mp:
             # Second guard: even code that bypassed the override would hit the test DB.
             mp.setattr(db, "DB_PATH", TEST_DB)
             main.app.dependency_overrides[db.get_conn] = get_test_conn
+            main.app.dependency_overrides[get_db] = override_get_db
 
             # The patched connection must really be the test DB.
             gen = get_test_conn()
@@ -488,6 +509,10 @@ def env(tmp_path_factory):
                 main.app.dependency_overrides.pop(db.get_conn, None)
             else:
                 main.app.dependency_overrides[db.get_conn] = previous_override
+            if previous_db_override is None:
+                main.app.dependency_overrides.pop(get_db, None)
+            else:
+                main.app.dependency_overrides[get_db] = previous_db_override
             undo_import()
 
 

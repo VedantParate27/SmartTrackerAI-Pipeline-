@@ -6,9 +6,9 @@ Run: python -m pytest test_smoke.py -q   (or) python test_smoke.py
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-from database import get_db
-from main import app
-from models import User
+from backend.database import get_db
+from backend.main import app
+from backend.models import User
 
 client = TestClient(app)
 

@@ -23,12 +23,11 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-import ai_client  # noqa: E402
-import waste_ai_service  # noqa: E402
-from database import _create_database_engine, get_db, run_migrations  # noqa: E402
-from models import CleanupProof, CleanupTask, Complaint, User  # noqa: E402
-from main import app  # noqa: E402
-from routers.auth import create_access_token  # noqa: E402
+from backend import ai_client, waste_ai_service  # noqa: E402
+from backend.database import _create_database_engine, get_db, run_migrations  # noqa: E402
+from backend.models import CleanupProof, CleanupTask, Complaint, User  # noqa: E402
+from backend.main import app  # noqa: E402
+from backend.routers.auth import create_access_token  # noqa: E402
 
 # Proof uploads are magic-byte validated; use a real JPEG head.
 JPEG_HEAD = b"\xff\xd8\xff\xe0" + b"\x00" * 16

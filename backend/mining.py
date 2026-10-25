@@ -18,7 +18,7 @@ import csv
 import io
 from datetime import datetime, timezone
 
-from models import AIOutput, CleanupProof, CleanupTask, Complaint
+from backend.models import AIOutput, CleanupProof, CleanupTask, Complaint
 
 MINING_FIELDNAMES = [
     "complaint_id",

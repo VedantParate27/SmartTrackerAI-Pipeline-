@@ -13,11 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
-from database import get_db
-from models import AIOutput, Complaint
-from routers.complaints import get_current_admin_user
-from routers.eventlog import log_event
-from taxonomy import (
+from backend.database import get_db
+from backend.models import AIOutput, Complaint
+from backend.routers.complaints import get_current_admin_user
+from backend.routers.eventlog import log_event
+from backend.taxonomy import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     EVENT_ACTIVITIES,
     HAZARDOUS_WASTE_TYPES,

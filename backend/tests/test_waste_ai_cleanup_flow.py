@@ -17,12 +17,10 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-import ai_client  # noqa: E402
-import image_utils  # noqa: E402
-import waste_ai_service  # noqa: E402
+from backend import ai_client, image_utils, waste_ai_service  # noqa: E402
 from test_app_state import TestingSessionLocal, client  # noqa: E402
 
-from models import (  # noqa: E402
+from backend.models import (  # noqa: E402
     AdminDecision,
     CleanupProof,
     CleanupTask,
@@ -74,7 +72,7 @@ def _register_and_login(email, password="Password123!"):
 
 
 def _promote(user_id, role):
-    from models import User
+    from backend.models import User
     with TestingSessionLocal() as db:
         db.query(User).filter(User.id == user_id).one().role = role
         db.commit()

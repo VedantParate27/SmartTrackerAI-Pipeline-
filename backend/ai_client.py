@@ -81,7 +81,13 @@ def get_timeout_s() -> int:
 def get_ai_src() -> str | None:
     """Configured AI source directory (WASTE_AI_SRC), or None when unset/empty."""
     raw = (os.getenv(WASTE_AI_SRC_ENV) or "").strip()
-    return raw or None
+    if not raw:
+        return None
+    if not os.path.isabs(raw):
+        # Resolve relative to project root (parent directory of backend)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        raw = os.path.abspath(os.path.join(project_root, raw))
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +148,8 @@ def analyze_waste_image(
     child_env["PYTHONIOENCODING"] = "utf-8"
     child_env["PYTHONSAFEPATH"] = "1"  # never resolve imports from the CWD by accident
     child_env["WASTE_AI_SRC"] = ai_src
+    child_env["ANONYMIZED_TELEMETRY"] = "False"
+    child_env["HF_HUB_OFFLINE"] = "1"
 
     try:
         completed = subprocess.run(
@@ -227,6 +235,8 @@ def verify_cleanup(
     child_env["PYTHONIOENCODING"] = "utf-8"
     child_env["PYTHONSAFEPATH"] = "1"
     child_env["WASTE_AI_SRC"] = ai_src
+    child_env["ANONYMIZED_TELEMETRY"] = "False"
+    child_env["HF_HUB_OFFLINE"] = "1"
 
     try:
         completed = subprocess.run(

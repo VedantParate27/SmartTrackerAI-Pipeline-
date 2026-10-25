@@ -123,7 +123,7 @@ def count_prior_reports_nearby(
             "reason": "missing_or_invalid_coordinates",
         }
 
-    from models import Complaint  # local import: avoids cycles at module load
+    from backend.models import Complaint  # local import: avoids cycles at module load
 
     lat = float(latitude)
     lng = float(longitude)

@@ -23,9 +23,9 @@ if str(BACKEND_DIR) not in sys.path:
 
 from test_app_state import TestingSessionLocal, client  # noqa: E402
 
-from models import AICorrection, AIOutput, Complaint, EventLog, User  # noqa: E402
-from triage import decide_escalation  # noqa: E402
-from taxonomy import compute_priority  # noqa: E402
+from backend.models import AICorrection, AIOutput, Complaint, EventLog, User  # noqa: E402
+from backend.triage import decide_escalation  # noqa: E402
+from backend.taxonomy import compute_priority  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

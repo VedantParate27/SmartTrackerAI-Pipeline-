@@ -25,13 +25,13 @@ from jose import JWTError, jwt
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # Our own modules
-from database import get_db
-from models import Complaint, Location, User, WasteAIResult
-from routers.auth import ALGORITHM, SECRET_KEY
-from schemas import ComplaintResponse, CreateComplaintRequest
-from taxonomy import compute_priority
-import image_utils
-from waste_ai_service import schedule_ai_analysis
+from backend.database import get_db
+from backend.models import Complaint, Location, User, WasteAIResult
+from backend.routers.auth import ALGORITHM, SECRET_KEY
+from backend.schemas import ComplaintResponse, CreateComplaintRequest
+from backend.taxonomy import compute_priority
+from backend import image_utils
+from backend.waste_ai_service import schedule_ai_analysis
 
 # ---------------------------------------------------------------------------
 # OAuth2 PASSWORD BEARER
@@ -93,15 +93,11 @@ def get_current_user(
 
 
     user = db.query(User).filter(User.id == user_id).first()
-    token_role = payload.get("role")
-    if user is not None and token_role:
-        user.role = token_role
-    elif user is None:
-        user = User(
-            id=user_id,
-            name=f"User {user_id}",
-            email=f"user{user_id}@example.com",
-            role=token_role or "citizen",
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User no longer exists",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
 
@@ -168,7 +164,7 @@ def _latest_ai_summary(result: Optional[WasteAIResult]) -> dict:
 
 def _ai_analysis_response(result: WasteAIResult) -> dict:
     """Full single-analysis response: verbatim AI data + HTTP-reachable image URL."""
-    from schemas import WasteAIResultResponse
+    from backend.schemas import WasteAIResultResponse
 
     payload = WasteAIResultResponse.model_validate(result).model_dump(mode="json")
     if payload.get("image_url"):
@@ -270,7 +266,7 @@ def create_complaint(
     # routers.eventlog imports get_current_admin_user from this module).
     # NOTE: db.flush() first so SQLAlchemy assigns tracking_id/id — column
     # defaults are applied at flush time, not at object construction.
-    from routers.eventlog import log_event
+    from backend.routers.eventlog import log_event
 
     db.add(new_complaint)
     db.flush()
@@ -352,11 +348,11 @@ def upload_complaint_image(
     image_url, mime = image_utils.store_complaint_image(data, ext)
 
     # --- Recurrence (AI input), computed BEFORE scheduling; safe on junk ---
-    from geo import count_prior_reports_nearby_or_zero
+    from backend.geo import count_prior_reports_nearby_or_zero
     prior_count = count_prior_reports_nearby_or_zero(
         db, complaint.latitude, complaint.longitude, current_complaint_id=complaint.id
     )
-    from geo import get_default_radius_m
+    from backend.geo import get_default_radius_m
     radius_m = get_default_radius_m()
 
     # --- Append-only pending result row (Step 1 model) ---
@@ -493,6 +489,13 @@ def get_complaint(
         .filter(Complaint.tracking_id == tracking_id)
         .first()
     )
+
+    if complaint is None and tracking_id.isdigit():
+        complaint = (
+            db.query(Complaint)
+            .filter(Complaint.id == int(tracking_id))
+            .first()
+        )
 
     if complaint is None:
         raise HTTPException(

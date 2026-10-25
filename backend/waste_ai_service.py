@@ -20,10 +20,9 @@
 import json
 from pathlib import Path
 
-import ai_client
-import image_utils
-from database import SessionLocal
-from models import CleanupProof, Complaint, WasteAIResult, utcnow
+from backend import ai_client, image_utils
+from backend.database import SessionLocal
+from backend.models import CleanupProof, Complaint, WasteAIResult, utcnow
 
 # NOTE: SessionLocal is imported at module level (not deep inside the function)
 # so the test harness can substitute it cleanly; production always uses the

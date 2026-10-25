@@ -22,7 +22,24 @@ const CONFIDENCE_OPTIONS = [
   { value: 'high', label: 'Above threshold' },
 ] as const
 
-const OPEN_STATUSES = new Set(['Pending Review', 'Manual Triage'])
+const OPEN_STATUSES = new Set(['Pending Review', 'Manual Triage', 'Submitted', 'AI Analysis'])
+
+function normalizeCaseStatus(raw: string | undefined): CaseStatus {
+  if (!raw) return 'Submitted'
+  const s = raw.toLowerCase().trim()
+  if (s === 'awaiting_review') return 'Pending Review'
+  if (s === 'manual_triage') return 'Manual Triage'
+  if (s === 'submitted') return 'Submitted'
+  if (s === 'pending') return 'Pending Review'
+  if (s === 'assigned') return 'Assigned to Department'
+  if (s === 'in_progress') return 'In Progress'
+  if (s === 'verification') return 'In Progress'
+  if (s === 'escalated') return 'Escalated'
+  if (s === 'resolved') return 'Resolved'
+  if (s === 'closed') return 'Closed'
+  if (s === 'rejected') return 'Rejected'
+  return (raw as CaseStatus) || 'Submitted'
+}
 
 function summary(item: Complaint) {
   const text = item.text.trim()
@@ -32,60 +49,91 @@ function summary(item: Complaint) {
 function QueuePage() {
   const { session, now } = useAppState()
   const [backendCases, setBackendCases] = useState<Complaint[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    setLoading(true)
+    setError(null)
     getAdminComplaints()
       .then((items) => {
-        const mapped: Complaint[] = items.map((item) => ({
-          id: String(item.id),
-          requesterName: `User ${item.user_id}`,
-          contact: '',
-          channel: 'Web',
-          language: 'English',
-          text: item.complaint_text,
-          attachments: [],
-          priority: 'Medium',
-          status:
-            item.status === 'awaiting_review' ? 'Pending Review' : 'Submitted',
-          submittedAt: item.created_at,
-          updatedAt: item.updated_at,
-          assignedDepartment: item.department,
-          location:
-            item.location_type != null
+        const mapped: Complaint[] = items.map((item: any) => {
+          const caseRef = String(item.tracking_id || item.id || '')
+          const requester =
+            item.name ||
+            item.requester_name ||
+            (item.user_id ? `User ${item.user_id}` : 'Citizen')
+          const contact = item.email || item.contact || ''
+          const text = item.complaint_text || item.text || ''
+          const submittedAt = item.created_at || item.submitted_at || new Date().toISOString()
+          const updatedAt = item.updated_at || submittedAt
+          const assignedDepartment = item.department || item.assigned_department || null
+          const rawPriority = item.priority || 'Medium'
+          const priority = (rawPriority.charAt(0).toUpperCase() + rawPriority.slice(1).toLowerCase()) as any
+
+          return {
+            id: caseRef,
+            requesterName: requester,
+            contact,
+            channel: 'Web',
+            language: item.language || 'English',
+            text,
+            attachments: [],
+            priority: (['Low', 'Medium', 'High'].includes(priority) ? priority : 'Medium') as any,
+            status: normalizeCaseStatus(item.status),
+            submittedAt,
+            updatedAt,
+            assignedDepartment,
+            location:
+              item.location_type != null
+                ? {
+                    type: item.location_type,
+                    latitude: item.latitude,
+                    longitude: item.longitude,
+                    manualAddress: item.manual_address || item.address_text || null,
+                  }
+                : item.latitude != null && item.longitude != null
+                  ? {
+                      type: 'gps',
+                      latitude: item.latitude,
+                      longitude: item.longitude,
+                      manualAddress: item.address_text || null,
+                    }
+                  : null,
+            classification: item.category
               ? {
-                  type: item.location_type,
-                  latitude: item.latitude,
-                  longitude: item.longitude,
-                  manualAddress: item.manual_address,
+                  intent: item.category,
+                  department: assignedDepartment ?? 'other',
+                  confidence: item.confidence_score ?? 0,
+                  alternatives: [],
+                  modelVersion: 'Gemini',
+                  taxonomyVersion: 'Phase 2',
+                  ruleApplied: null,
+                  overriddenBy: null,
                 }
               : null,
-          classification: item.category
-            ? {
-                intent: item.category,
-                department: item.department ?? 'other',
-                confidence: item.confidence_score ?? 0,
-                alternatives: [],
-                modelVersion: 'Gemini',
-                taxonomyVersion: 'Phase 2',
-                ruleApplied: null,
-                overriddenBy: null,
-              }
-            : null,
-          entities: [],
-          evidence: [],
-          aiDraft: null,
-          editedDraft: null,
-          resolution: null,
-          closureReason: null,
-          duplicateOf: null,
-          comments: [],
-          audit: [],
-        }))
+            entities: [],
+            evidence: [],
+            aiDraft: item.ai_draft_response
+              ? { text: item.ai_draft_response, confidence: 0.9, references: [] }
+              : null,
+            editedDraft: null,
+            resolution: null,
+            closureReason: null,
+            duplicateOf: null,
+            comments: [],
+            audit: [],
+          }
+        })
 
         setBackendCases(mapped)
       })
-      .catch((error) => {
-        console.error('Failed to load admin queue:', error)
+      .catch((err) => {
+        console.error('Failed to load admin queue:', err)
+        setError(err?.message || 'Failed to load live complaint queue from the server.')
+      })
+      .finally(() => {
+        setLoading(false)
       })
   }, [])
 
@@ -166,6 +214,21 @@ function QueuePage() {
 
   return (
     <div className="grid gap-4">
+      {error ? (
+        <Callout tone="danger" title="Unable to Synchronize Queue">
+          {error}{' '}
+          <Link to="/login" className="underline font-bold">
+            Sign in as Admin
+          </Link>
+        </Callout>
+      ) : null}
+
+      {loading ? (
+        <div className="card card-pad text-sm muted">
+          Loading live complaints from backend...
+        </div>
+      ) : null}
+
       {session.departments !== null ? (
         <Callout tone="info" title="Department-limited view">
           You are signed in as {session.role} for{' '}

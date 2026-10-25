@@ -28,6 +28,8 @@ import json
 import os
 import sys
 import traceback
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 WASTE_AI_SRC = (os.environ.get("WASTE_AI_SRC") or "").strip()
 

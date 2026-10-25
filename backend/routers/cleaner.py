@@ -5,90 +5,158 @@
 # for process mining) and event logging on proof upload. Everything else is
 # the existing, tested workflow.
 
-import os
 from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from database import get_db
-from db import get_conn
-from models import CleanupProof, CleanupTask, User, WasteAIResult, cleaner_locations, utcnow
-from routers.complaints import get_current_cleaner_user
-from routers.eventlog import log_event
-from schemas import CleanerTaskResponse, CleanupProofResponse
-from task_timeline import first_proof_uploaded_at
-import image_utils
-from waste_ai_service import schedule_cleanup_verification
+from backend.database import get_db
+from backend.db import get_conn
+from backend.models import CleanupProof, CleanupTask, User, WasteAIResult, cleaner_locations, utcnow
+from backend.routers.complaints import get_current_cleaner_user
+from backend.routers.eventlog import log_event
+from backend.schemas import CleanerTaskResponse, CleanupProofResponse
+from backend.task_timeline import first_proof_uploaded_at
+from backend import image_utils
+from backend.waste_ai_service import schedule_cleanup_verification
 
 router = APIRouter(prefix="/cleaner", tags=["cleaner"])
-
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 
 def build_cleaner_task_response(task: CleanupTask) -> CleanerTaskResponse:
     complaint = task.complaint
     proof_responses = []
     for proof in task.proofs:
+        proof_img = proof.image_url or getattr(proof, "image_path", None)
+        if proof_img:
+            proof_img = proof_img.replace("\\", "/")
+
+        up_at = proof.uploaded_at
+        up_at_str = (
+            up_at.isoformat() if hasattr(up_at, "isoformat")
+            else (str(up_at) if up_at and str(up_at) != "None" else None)
+        )
+        ver_at = proof.verified_at
+        ver_at_str = (
+            ver_at.isoformat() if hasattr(ver_at, "isoformat")
+            else (str(ver_at) if ver_at and str(ver_at) != "None" else None)
+        )
+
         proof_responses.append(
             CleanupProofResponse(
                 id=proof.id,
                 task_id=proof.task_id,
-                image_url=proof.image_url,
+                image_url=proof_img,
+                image_path=getattr(proof, "image_path", None),
                 uploaded_by=proof.uploaded_by,
-                uploaded_at=proof.uploaded_at.isoformat() if hasattr(proof.uploaded_at, "isoformat") else str(proof.uploaded_at),
+                uploaded_at=up_at_str,
                 verification_status=proof.verification_status,
                 verified_by=proof.verified_by,
-                verified_at=proof.verified_at.isoformat() if proof.verified_at and hasattr(proof.verified_at, "isoformat") else (str(proof.verified_at) if proof.verified_at else None),
+                verified_at=ver_at_str,
                 rejection_reason=proof.rejection_reason,
             )
         )
 
-    assigned_at_str = (
-        task.assigned_at.isoformat()
-        if hasattr(task.assigned_at, "isoformat")
-        else str(task.assigned_at)
-    )
-    started_at_str = (
-        task.started_at.isoformat()
-        if task.started_at and hasattr(task.started_at, "isoformat")
-        else (str(task.started_at) if task.started_at else None)
-    )
-    completed_at_str = (
-        task.completed_at.isoformat()
-        if task.completed_at and hasattr(task.completed_at, "isoformat")
-        else (str(task.completed_at) if task.completed_at else None)
-    )
-    # First proof upload — derived from the append-only proof history, so it
-    # can never be overwritten by a later upload. None until a proof exists.
+    # Resolve complaint original image
+    complaint_img = None
+    if complaint:
+        if hasattr(complaint, "waste_ai_results") and complaint.waste_ai_results:
+            for ai_res in reversed(complaint.waste_ai_results):
+                if ai_res.image_url:
+                    complaint_img = ai_res.image_url
+                    break
+        if not complaint_img and task.proofs:
+            for proof in task.proofs:
+                if getattr(proof, "before_image_url", None):
+                    complaint_img = proof.before_image_url
+                    break
+        if not complaint_img and getattr(complaint, "image_path", None):
+            complaint_img = complaint.image_path
+
+    if complaint_img:
+        complaint_img = complaint_img.replace("\\", "/")
+
+    # Resolve location
+    addr_text = None
+    manual_addr = None
+    loc_type = None
+    lat = None
+    lng = None
+    loc_display = "Location not available"
+
+    if complaint:
+        addr_text = complaint.address_text
+        manual_addr = getattr(complaint, "manual_address", None)
+        loc_type = getattr(complaint, "location_type", None)
+        lat = complaint.latitude
+        lng = complaint.longitude
+
+        readable_addr = addr_text or manual_addr or (complaint.location.name if complaint.location else None)
+        if readable_addr:
+            loc_display = readable_addr
+        elif lat is not None and lng is not None:
+            loc_display = f"GPS ({lat:.4f}, {lng:.4f})"
+        else:
+            loc_display = "Location not available"
+
+    assigned_at_str = None
+    if task.assigned_at and str(task.assigned_at) != "None":
+        assigned_at_str = (
+            task.assigned_at.isoformat()
+            if hasattr(task.assigned_at, "isoformat")
+            else str(task.assigned_at)
+        )
+
+    started_at_str = None
+    if task.started_at and str(task.started_at) != "None":
+        started_at_str = (
+            task.started_at.isoformat()
+            if hasattr(task.started_at, "isoformat")
+            else str(task.started_at)
+        )
+
+    completed_at_str = None
+    if task.completed_at and str(task.completed_at) != "None":
+        completed_at_str = (
+            task.completed_at.isoformat()
+            if hasattr(task.completed_at, "isoformat")
+            else str(task.completed_at)
+        )
+
     first_proof_at = first_proof_uploaded_at(task.proofs)
-    first_proof_at_str = (
-        first_proof_at.isoformat()
-        if first_proof_at and hasattr(first_proof_at, "isoformat")
-        else (str(first_proof_at) if first_proof_at else None)
-    )
+    first_proof_at_str = None
+    if first_proof_at and str(first_proof_at) != "None":
+        first_proof_at_str = (
+            first_proof_at.isoformat()
+            if hasattr(first_proof_at, "isoformat")
+            else str(first_proof_at)
+        )
 
     return CleanerTaskResponse(
         id=task.id,
         complaint_id=complaint.id if complaint else None,
         cleaner_id=task.assigned_cleaner_id,
         complaint_status=complaint.status if complaint else None,
-        task_id=task.task_id,
-        tracking_id=complaint.tracking_id,
+        task_id=task.task_id or f"TSK-{task.id}",
+        tracking_id=complaint.tracking_id if complaint else "",
         status=task.status,
         assigned_at=assigned_at_str,
         started_at=started_at_str,
         completed_at=completed_at_str,
         first_proof_uploaded_at=first_proof_at_str,
         notes=task.notes,
-        complaint_text=complaint.complaint_text,
-        waste_type=complaint.waste_type,
-        quantity_severity=complaint.quantity_severity,
-        recommended_action=complaint.recommended_action,
-        latitude=complaint.latitude,
-        longitude=complaint.longitude,
-        address_text=complaint.address_text,
+        complaint_text=complaint.complaint_text if complaint else "",
+        waste_type=complaint.waste_type if complaint else None,
+        quantity_severity=complaint.quantity_severity if complaint else None,
+        severity=getattr(complaint, "severity", None) or (complaint.quantity_severity if complaint else None),
+        recommended_action=complaint.recommended_action if complaint else None,
+        latitude=lat,
+        longitude=lng,
+        address_text=addr_text or manual_addr,
+        manual_address=manual_addr or addr_text,
+        location_type=loc_type or ("gps" if (lat and lng and not manual_addr) else "manual"),
+        location_display=loc_display,
+        image_url=complaint_img,
+        image_path=complaint_img,
         proofs=proof_responses,
     )
 
@@ -314,6 +382,7 @@ def start_cleanup_task(
         )
 
     return build_cleaner_task_response(task)
+    
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +461,7 @@ async def upload_cleanup_proof(
 
     old_status = task.status
     proof = CleanupProof(
-        task_id=task.id,
+        task_id=task.task_id or f"TSK-{task.id}",
         image_url=image_url,
         before_image_url=before_url,
         uploaded_by=current_user.id,
@@ -401,24 +470,28 @@ async def upload_cleanup_proof(
     db.add(proof)
     task.status = "proof_submitted"
 
-    log_event(
-        db,
-        case_id=task.complaint.tracking_id,
-        activity="proof_submitted",
-        actor_id=current_user.id,
-        actor_role="cleaner",
-        old_value=old_status,
-        new_value="proof_submitted",
-        meta={"proof_id": proof.id, "image_url": image_url},
-    )
-
     try:
+        # Flush assigns proof.id while keeping the transaction uncommitted.
+        db.flush()
+
+        log_event(
+            db,
+            case_id=task.complaint.tracking_id,
+            activity="proof_submitted",
+            actor_id=current_user.id,
+            actor_role="cleaner",
+            old_value=old_status,
+            new_value="proof_submitted",
+            meta={"proof_id": proof.id, "image_url": image_url},
+        )
+
         db.commit()
         db.refresh(proof)
         db.refresh(task)
+
     except Exception:
         db.rollback()
-        # Do not leave a stored image with no DB row behind it.
+        # Do not leave a stored image with no DB row behind.
         try:
             stored = image_utils.UPLOADS_DIR / image_url.rsplit("/", 1)[1]
             stored.unlink(missing_ok=True)

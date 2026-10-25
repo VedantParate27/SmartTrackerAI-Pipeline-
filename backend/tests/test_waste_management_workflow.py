@@ -12,7 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from test_app_state import TestingSessionLocal, app, client  # noqa: E402
-from models import User, Complaint, CleanupTask, CleanupProof  # noqa: E402
+from backend.models import User, Complaint, CleanupTask, CleanupProof  # noqa: E402
 
 # Step-6 proof uploads are magic-byte validated; test payloads use a real JPEG head.
 JPEG_HEAD = b"\xff\xd8\xff\xe0" + b"\x00" * 16

@@ -8,20 +8,20 @@ The actual AI work is performed by ai/src/.
 """
 
 import json
+import importlib
 import sys
 from pathlib import Path
 
-# Phase 2 AI files use local imports such as "from config import ...".
-# Adding ai/src to sys.path lets those modules work when called by FastAPI.
+# The legacy AI modules use local imports such as "from config import ...".
+# Keep their directory off sys.path until an AI operation is actually called so
+# importing the FastAPI application does not eagerly load optional ML packages.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 AI_SRC = PROJECT_ROOT / "ai" / "src"
 
-if str(AI_SRC) not in sys.path:
-    sys.path.insert(0, str(AI_SRC))
-
-from classifier import classify_complaint
-from retrieval import hybrid_search, rerank
-from generator import generate_response
+def _ai_module(name: str):
+    if str(AI_SRC) not in sys.path:
+        sys.path.insert(0, str(AI_SRC))
+    return importlib.import_module(name)
 
 
 def classify_and_extract(complaint_text: str) -> dict:
@@ -29,7 +29,7 @@ def classify_and_extract(complaint_text: str) -> dict:
     Run Phase 2 classification while preserving the backend's
     existing return format.
     """
-    result = classify_complaint(complaint_text)
+    result = _ai_module("classifier").classify_complaint(complaint_text)
 
     return {
         "category": result["category"],
@@ -50,13 +50,14 @@ def generate_draft_response(
     The entities argument is retained for compatibility with the
     existing backend route.
     """
-    candidates = hybrid_search(
+    retrieval = _ai_module("retrieval")
+    candidates = retrieval.hybrid_search(
         complaint_text,
         department,
         top_k=10
     )
 
-    ranked_chunks = rerank(
+    ranked_chunks = retrieval.rerank(
         complaint_text,
         candidates,
         top_k=3
@@ -67,8 +68,18 @@ def generate_draft_response(
         for doc, meta, _score in ranked_chunks
     ]
 
-    return generate_response(complaint_text, chunks)
+    return _ai_module("generator").generate_response(complaint_text, chunks)
 
 
 def entities_to_json(entities: dict) -> str:
     return json.dumps(entities)
+
+
+def process_waste_image(*args, **kwargs) -> dict:
+    """Load the optional waste-image pipeline only when a complaint needs it."""
+    return _ai_module("waste_pipeline").process_waste_image(*args, **kwargs)
+
+
+def verify_cleanup(*args, **kwargs) -> dict:
+    """Load the optional cleanup verifier only when a proof needs it."""
+    return _ai_module("cleanup_verifier").verify_cleanup(*args, **kwargs)

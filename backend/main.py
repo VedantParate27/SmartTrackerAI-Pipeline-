@@ -14,27 +14,48 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
-from db import get_conn
-from ai_pipeline import (
-    classify_and_extract,
-    generate_draft_response,
-    entities_to_json,
-)
-from auth import (
-    RegisterRequest,
-    RegisterResponse,
-    LoginRequest,
-    TokenResponse,
-    register_user,
-    login_user,
-    get_current_user,
-    require_role,
-    hash_password,
-)
-from waste_pipeline import process_waste_image
-from cleanup_verifier import verify_cleanup
-
-
+try:
+    from backend.db import get_conn
+    from backend.ai_pipeline import (
+        classify_and_extract,
+        generate_draft_response,
+        entities_to_json,
+        process_waste_image,
+        verify_cleanup,
+    )
+    from backend.auth import (
+        RegisterRequest,
+        RegisterResponse,
+        LoginRequest,
+        TokenResponse,
+        register_user,
+        login_user,
+        get_current_user,
+        require_role,
+        hash_password,
+    )
+    from backend.waste_ai_service import schedule_cleanup_verification
+except ImportError:
+    from db import get_conn
+    from ai_pipeline import (
+        classify_and_extract,
+        generate_draft_response,
+        entities_to_json,
+        process_waste_image,
+        verify_cleanup,
+    )
+    from auth import (
+        RegisterRequest,
+        RegisterResponse,
+        LoginRequest,
+        TokenResponse,
+        register_user,
+        login_user,
+        get_current_user,
+        require_role,
+        hash_password,
+    )
+    from waste_ai_service import schedule_cleanup_verification
 
 app = FastAPI(title="SmartTracker AI")
 
@@ -53,6 +74,12 @@ app.add_middleware(
         "http://localhost:3001",
         "http://127.0.0.1:3001",
         "http://10.108.147.119:3001",
+        "https://localhost:3000",
+        "https://127.0.0.1:3000",
+        "https://10.108.147.119:3000",
+        "https://localhost:3001",
+        "https://127.0.0.1:3001",
+        "https://10.108.147.119:3001",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -688,14 +715,20 @@ def process_complaint(
 
 @app.get("/complaints/{complaint_id}", response_model=ComplaintOut)
 def get_complaint(
-    complaint_id: int,
+    complaint_id: Union[int, str],
     current_user=Depends(get_current_user),
     conn=Depends(get_conn),
 ):
-    row = conn.execute(
-        "SELECT user_id FROM complaints WHERE id = ?",
-        (complaint_id,),
-    ).fetchone()
+    if str(complaint_id).isdigit():
+        row = conn.execute(
+            "SELECT id, user_id FROM complaints WHERE id = ?",
+            (int(complaint_id),),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id, user_id FROM complaints WHERE tracking_id = ?",
+            (str(complaint_id),),
+        ).fetchone()
 
     if not row:
         raise HTTPException(404, "complaint not found")
@@ -709,7 +742,7 @@ def get_complaint(
             "not authorized to view this complaint",
         )
 
-    return _get_complaint_row(conn, complaint_id)
+    return _get_complaint_row(conn, row["id"])
 
 
 def _get_complaint_row(conn, complaint_id: int) -> dict:
@@ -834,15 +867,22 @@ def admin_complaints(
 
 @app.post("/admin/complaints/{complaint_id}/review")
 def review_waste_complaint(
-    complaint_id: int,
+    complaint_id: Union[int, str],
     payload: WasteReviewIn,
     current_user=Depends(get_current_user),
     conn=Depends(get_conn),
 ):
     require_role(current_user, "admin")
 
+    if str(complaint_id).isdigit():
+        clause = "WHERE id = ?"
+        param = int(complaint_id)
+    else:
+        clause = "WHERE tracking_id = ?"
+        param = str(complaint_id)
+
     complaint = conn.execute(
-        """
+        f"""
         SELECT id,
                status,
                image_path,
@@ -851,9 +891,9 @@ def review_waste_complaint(
                needs_human_review,
                escalate_to_authority
         FROM complaints
-        WHERE id = ?
+        {clause}
         """,
-        (complaint_id,),
+        (param,),
     ).fetchone()
 
     if not complaint:
@@ -1025,88 +1065,9 @@ def _save_cleanup_proof_image(image_bytes: bytes, mime_type: str) -> str:
 
 
 
-@app.post("/cleaner/tasks/{task_id:int}/start")
-def start_cleanup_task(
-    task_id: int,
-    current_user=Depends(get_current_user),
-    conn=Depends(get_conn),
-):
-    require_role(current_user, "cleaner")
-
-    task = conn.execute(
-        """
-        SELECT id,
-               complaint_id,
-               cleaner_id,
-               assigned_by,
-               status,
-               notes,
-               created_at,
-               updated_at
-        FROM cleanup_tasks
-        WHERE id = ?
-          AND cleaner_id = ?
-        """,
-        (task_id, current_user["id"]),
-    ).fetchone()
-
-    if not task:
-        raise HTTPException(
-            status_code=404,
-            detail="cleanup task not found",
-        )
-
-    if task["status"] != "assigned":
-        raise HTTPException(
-            status_code=409,
-            detail="cleanup task is not in assigned state",
-        )
-
-    conn.execute(
-        """
-        UPDATE cleanup_tasks
-        SET status = 'in_progress',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        """,
-        (task_id,),
-    )
-
-    conn.execute(
-        """
-        UPDATE complaints
-        SET status = 'in_progress',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        """,
-        (task["complaint_id"],),
-    )
-
-    conn.commit()
-
-    updated_task = conn.execute(
-        """
-        SELECT id,
-               complaint_id,
-               cleaner_id,
-               assigned_by,
-               status,
-               notes,
-               created_at,
-               updated_at
-        FROM cleanup_tasks
-        WHERE id = ?
-        """,
-        (task_id,),
-    ).fetchone()
-
-    return dict(updated_task)
-
-
-
-@app.post("/cleaner/tasks/{task_id:int}/proof")
+@app.post("/cleaner/tasks/{task_id}/proof")
 async def upload_cleanup_proof(
-    task_id: int,
+    task_id: Union[int, str],
     image: UploadFile = File(...),
     current_user=Depends(get_current_user),
     conn=Depends(get_conn),
@@ -1120,11 +1081,13 @@ async def upload_cleanup_proof(
                cleaner_id,
                status
         FROM cleanup_tasks
-        WHERE id = ?
-          AND cleaner_id = ?
+        WHERE (id = ? OR task_id = ?)
+          AND (cleaner_id = ? OR assigned_cleaner_id = ?)
         """,
-        (task_id, current_user["id"]),
+        (task_id, str(task_id), current_user["id"], current_user["id"]),
     ).fetchone()
+    if task:
+        task_id = task["id"]
 
     if not task:
         raise HTTPException(
@@ -1200,7 +1163,17 @@ async def upload_cleanup_proof(
             detail="complaint does not have a before image",
         )
 
-    before_path = PROJECT_ROOT / Path(complaint["image_path"])
+    raw_path = Path(complaint["image_path"])
+    if raw_path.is_absolute() and raw_path.exists():
+        before_path = raw_path
+    elif (PROJECT_ROOT / raw_path).exists():
+        before_path = PROJECT_ROOT / raw_path
+    elif (PROJECT_ROOT / "backend" / raw_path).exists():
+        before_path = PROJECT_ROOT / "backend" / raw_path
+    elif (PROJECT_ROOT / str(raw_path).lstrip("/\\")).exists():
+        before_path = PROJECT_ROOT / str(raw_path).lstrip("/\\")
+    else:
+        before_path = PROJECT_ROOT / raw_path
 
     if not before_path.exists():
         raise HTTPException(
@@ -1226,13 +1199,14 @@ async def upload_cleanup_proof(
         )
 
     except Exception as exc:
-        if proof_file.exists():
-            proof_file.unlink()
-
-        raise HTTPException(
-            status_code=502,
-            detail=f"cleanup verification failed: {exc}",
-        )
+        verification = {
+            "after_image_usable": True,
+            "unusable_reason": None,
+            "cleanup_appears_complete": True,
+            "confidence": 0.5,
+            "reasoning": f"Advisory fallback: AI verification unavailable ({exc}). Flagged for admin manual review.",
+            "admin_review_recommended": True,
+        }
 
     verification_reason = verification["reasoning"]
 
@@ -1684,13 +1658,20 @@ def admin_analytics_time_estimates(
 # ---------------------------------------------------------------------------
 # Modular router inclusions
 # ---------------------------------------------------------------------------
-from routers import admin as admin_router
-from routers import cleaner as cleaner_router
-from routers import app_state as app_state_router
-from routers import complaints as complaints_router
-from routers import eventlog as eventlog_router
-from routers import mining as mining_router
-import triage as triage_router
+try:
+    from backend.routers import admin as admin_router
+    from backend.routers import cleaner as cleaner_router
+    from backend.routers import app_state as app_state_router
+    from backend.routers import complaints as complaints_router
+    from backend.routers import eventlog as eventlog_router
+    from backend.routers import mining as mining_router
+except ImportError:
+    from routers import admin as admin_router
+    from routers import cleaner as cleaner_router
+    from routers import app_state as app_state_router
+    from routers import complaints as complaints_router
+    from routers import eventlog as eventlog_router
+    from routers import mining as mining_router
 
 app.include_router(admin_router.router)
 app.include_router(cleaner_router.router)
@@ -1698,4 +1679,9 @@ app.include_router(app_state_router.router)
 app.include_router(complaints_router.router)
 app.include_router(eventlog_router.router)
 app.include_router(mining_router.router)
-app.include_router(triage_router.router)
+
+
+
+
+
+

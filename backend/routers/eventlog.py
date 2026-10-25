@@ -13,10 +13,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from database import get_db
-from models import EventLog
-from routers.complaints import get_current_admin_user
-from taxonomy import EVENT_ACTIVITIES
+from backend.database import get_db
+from backend.models import EventLog
+from backend.routers.complaints import get_current_admin_user
+from backend.taxonomy import EVENT_ACTIVITIES
 
 import csv
 import io

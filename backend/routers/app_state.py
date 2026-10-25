@@ -15,8 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
-from database import get_db
-from models import AppStateSnapshot, utcnow
+from backend.database import get_db
+from backend.models import AppStateSnapshot, utcnow
 
 
 MAX_CASES = 2_000

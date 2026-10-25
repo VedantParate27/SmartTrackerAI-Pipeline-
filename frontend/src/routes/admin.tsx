@@ -1,6 +1,7 @@
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router'
 import { resetStore } from '#/lib/store'
 import { getAuthUser } from '#/lib/api'
+import { Callout } from '#/components/ui'
 
 export const Route = createFileRoute('/admin')({ component: AdminLayout })
 
@@ -75,6 +76,26 @@ function AdminLayout() {
           Analytics & Estimates
         </Link>
       </nav>
+
+      {!authUser ? (
+        <div className="mt-4">
+          <Callout tone="warn" title="Sign In Required for Live Operations">
+            You are browsing the admin workspace without an active session. Live queue syncing, case decisions, and assignments require an administrator account.{' '}
+            <Link to="/login" className="underline font-bold">
+              Sign in as Admin
+            </Link>
+          </Callout>
+        </div>
+      ) : authUser.role !== 'admin' ? (
+        <div className="mt-4">
+          <Callout tone="danger" title="Admin Access Required">
+            You are signed in as <span className="font-semibold">{authUser.email}</span> with role <span className="font-bold">{authUser.role}</span>. An administrator account is required to review grievances.{' '}
+            <Link to="/login" className="underline font-bold">
+              Switch account
+            </Link>
+          </Callout>
+        </div>
+      ) : null}
 
       <div className="mt-4">
         <Outlet />

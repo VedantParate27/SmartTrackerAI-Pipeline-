@@ -1,12 +1,23 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+/* Self-hosted Manrope variable font (latin subset) with local and system fallbacks */
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src:
+    local('Manrope'),
+    url('/fonts/manrope-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @import 'tailwindcss';
 
 /* The inline script in __root.tsx puts .light / .dark on <html> before paint. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: 'Manrope', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', 'Menlo', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 :root {
@@ -37,6 +48,15 @@
   --shadow-sm: 0 1px 2px rgba(15, 34, 41, 0.06);
   --shadow-md:
     0 2px 4px rgba(15, 34, 41, 0.05), 0 8px 20px rgba(15, 34, 41, 0.06);
+
+  --series-1: #0c7684;
+  --series-2: #2563eb;
+  --series-3: #d97706;
+  --series-4: #059669;
+  --series-5: #7c3aed;
+  --series-6: #db2777;
+  --series-7: #ea580c;
+  --series-8: #0891b2;
 }
 
 :root.dark {
@@ -66,6 +86,15 @@
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.25), 0 8px 20px rgba(0, 0, 0, 0.3);
+
+  --series-1: #38bdf8;
+  --series-2: #4ade80;
+  --series-3: #fbbf24;
+  --series-4: #a78bfa;
+  --series-5: #f472b6;
+  --series-6: #fb923c;
+  --series-7: #2dd4bf;
+  --series-8: #818cf8;
 }
 
 * {
@@ -776,3 +805,275 @@ h4 {
   line-height: 1.1;
   letter-spacing: -0.02em;
 }
+
+/* ------------------------------------------------------------------ *
+ * Analytics & Charts styling (Dark theme & Light theme)
+ * ------------------------------------------------------------------ */
+
+.chart {
+  margin: 0;
+  width: 100%;
+}
+
+.chart-frame {
+  position: relative;
+  width: 100%;
+  min-height: 284px;
+  overflow: visible;
+}
+
+.chart-frame svg {
+  display: block;
+  overflow: visible;
+}
+
+/* Hit targets MUST be transparent so they don't block the chart graphics */
+.chart-hit {
+  fill: transparent;
+  stroke: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  shape-rendering: crispEdges;
+  opacity: 0.8;
+}
+
+.chart-axis {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  shape-rendering: crispEdges;
+}
+
+.chart-tick {
+  fill: var(--fg-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  user-select: none;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-dot {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.chart-crosshair {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 2;
+  pointer-events: none;
+}
+
+.chart-end-label {
+  fill: var(--fg-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+}
+
+.chart-group {
+  transition: opacity 0.15s ease;
+}
+
+.chart-group[data-dim] path {
+  opacity: 0.35;
+}
+
+.chart-tip {
+  position: absolute;
+  top: 1rem;
+  z-index: 20;
+  min-width: 160px;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  padding: 0.5rem 0.75rem;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  font-size: 0.8125rem;
+  color: var(--fg);
+}
+
+.chart-tip-title {
+  margin: 0 0 0.35rem 0;
+  font-weight: 700;
+  color: var(--fg);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.25rem;
+}
+
+.chart-tip-row {
+  margin: 0.25rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--fg);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+  margin: 0.85rem 0 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+  color: var(--fg-muted);
+}
+
+.chart-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.key-rect {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.key-line {
+  display: inline-block;
+  width: 1.1rem;
+  height: 2.5px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.key-line-thick {
+  height: 5px;
+  border-radius: 2px;
+}
+
+.chart-table {
+  margin-top: 1rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+}
+
+.chart-table summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--fg-muted);
+  font-weight: 600;
+  user-select: none;
+}
+
+.chart-table summary:hover {
+  color: var(--fg);
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 9999px;
+  background: var(--surface);
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.chip:hover {
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+
+.chip[aria-pressed='false'] {
+  opacity: 0.45;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface-2);
+  padding: 2px;
+  gap: 2px;
+}
+
+.segmented button {
+  border: none;
+  border-radius: calc(0.5rem - 2px);
+  background: transparent;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.segmented button:hover {
+  color: var(--fg);
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-sm);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.data-table thead th {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  background: var(--surface-2);
+}
+
+.data-table.numeric th:not(:first-child),
+.data-table.numeric td:not(:first-child) {
+  text-align: right;
+}
+

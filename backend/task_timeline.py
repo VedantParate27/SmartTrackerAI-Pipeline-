@@ -31,7 +31,7 @@
 from datetime import datetime
 from typing import Iterable, Optional
 
-from models import CleanupProof
+from backend.models import CleanupProof
 
 
 def first_proof_uploaded_at(proofs: Iterable[CleanupProof]) -> Optional[datetime]:

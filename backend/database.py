@@ -3,6 +3,7 @@
 # It uses SQLite (a lightweight file-based database) with SQLAlchemy (an ORM toolkit).
 
 import os
+import re
 from pathlib import Path
 
 from sqlalchemy import create_engine, event, inspect, text
@@ -119,6 +120,76 @@ def _ensure_location_schema(target_engine):
         ), {"name": "Kalyan-Dombivli", "slug": "kalyan-dombivli"})
 
 
+def _upgrade_complaint_status_constraint(target_engine):
+    """Remove the legacy status CHECK when it rejects the current ``pending`` state.
+
+    SQLite cannot alter a CHECK constraint in place.  The rebuild keeps the
+    existing table definition and data, changing only the status constraint;
+    explicit indexes and triggers are recreated afterwards.
+    """
+    with target_engine.connect() as connection:
+        table_sql = connection.execute(text(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'complaints'"
+        )).scalar_one_or_none()
+
+        if not table_sql or "pending" in table_sql.lower():
+            return
+
+        status_check = re.compile(
+            r"(\bstatus\b\s+\w+(?:\([^)]*\))?\s+NOT\s+NULL\s+"
+            r"DEFAULT\s+'[^']+')\s+CHECK\s*\(\s*status\s+IN\s*"
+            r"\([^)]*\)\s*\)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        upgraded_sql, replacements = status_check.subn(r"\1", table_sql, count=1)
+        if replacements != 1:
+            return
+
+        upgraded_sql = re.sub(
+            r'CREATE\s+TABLE\s+(?:"complaints"|`complaints`|\[complaints\]|complaints)',
+            "CREATE TABLE complaints_status_upgrade",
+            upgraded_sql,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        indexes = connection.execute(text(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'index' AND tbl_name = 'complaints' AND sql IS NOT NULL"
+        )).scalars().all()
+        triggers = connection.execute(text(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'trigger' AND tbl_name = 'complaints' AND sql IS NOT NULL"
+        )).scalars().all()
+        columns = connection.execute(text("PRAGMA table_info(complaints)")).mappings().all()
+        quoted_columns = ", ".join(
+            f'"{column["name"].replace(chr(34), chr(34) * 2)}"'
+            for column in columns
+        )
+
+        connection.commit()
+        connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
+        connection.commit()
+        try:
+            with connection.begin():
+                connection.execute(text(upgraded_sql))
+                connection.execute(text(
+                    f"INSERT INTO complaints_status_upgrade ({quoted_columns}) "
+                    f"SELECT {quoted_columns} FROM complaints"
+                ))
+                connection.execute(text("DROP TABLE complaints"))
+                connection.execute(text(
+                    "ALTER TABLE complaints_status_upgrade RENAME TO complaints"
+                ))
+                for index_sql in indexes:
+                    connection.execute(text(index_sql))
+                for trigger_sql in triggers:
+                    connection.execute(text(trigger_sql))
+        finally:
+            connection.commit()
+            connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+
+
 def run_migrations(target_engine=None):
     """
     Idempotent schema migration for SQLite databases.
@@ -129,6 +200,7 @@ def run_migrations(target_engine=None):
     research-layer columns (complaints) and tables (ai_outputs, ai_corrections,
     event_log) appear on databases created by earlier versions.
     """
+    import backend.models  # noqa: F401
     if target_engine is None:
         target_engine = engine
 
@@ -148,15 +220,18 @@ def run_migrations(target_engine=None):
         for column in table.columns:
             if column.name in existing_columns:
                 continue
-            # Never ALTER primary keys or foreign keys on existing tables;
-            # new tables created by create_all always carry them already.
-            if column.primary_key or column.foreign_keys:
+            # SQLite cannot safely add primary keys or required foreign keys to
+            # an existing table.  Nullable relationship columns are safe to
+            # add, and are needed for older workflow tables to match the ORM.
+            if column.primary_key or (column.foreign_keys and not column.nullable):
                 continue
             ddl = _column_ddl(column)
             with target_engine.begin() as connection:
                 connection.execute(
                     text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}")
                 )
+
+    _upgrade_complaint_status_constraint(target_engine)
 
 
 

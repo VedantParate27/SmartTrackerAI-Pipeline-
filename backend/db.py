@@ -6,7 +6,7 @@ from typing import Generator, Optional
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from database import get_db
+from backend.database import get_db
 
 DEFAULT_DB_PATH = Path(__file__).parent / "smarttracker.db"
 DB_PATH = Path(

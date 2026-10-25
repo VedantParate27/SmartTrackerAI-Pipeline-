@@ -33,7 +33,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship, backref  # defines the Python-level link between models
 
-from database import Base  # import the shared Base class from database.py
+from backend.database import Base  # import the shared Base class from database.py
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +164,11 @@ class Complaint(Base):
     longitude = Column(Float, nullable=True)
     address_text = Column(String(255), nullable=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)
+    manual_address = Column(String(255), nullable=True)
+    location_type = Column(String(50), nullable=True)
+    image_path = Column(String(500), nullable=True)
+    image_mime_type = Column(String(50), nullable=True)
+    severity = Column(String(50), nullable=True)
 
     # --- Research / DWM fields (Phase 3) -----------------------------------
     # triage_mode: NULL = not yet triaged; "manual" = human-only cohort;
@@ -315,8 +320,9 @@ class CleanupProof(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("cleanup_tasks.id"), nullable=False, index=True)
-    image_url = Column(String(500), nullable=False)
-    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    image_url = Column(String(500), nullable=True)
+    image_path = Column(String(500), nullable=True)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     uploaded_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     verification_status = Column(String(30), nullable=False, default="pending_verification") # pending_verification, verified, rejected
     verified_by = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -530,3 +536,38 @@ class EventLog(Base):
 
     def __repr__(self):
         return f"<EventLog id={self.event_id} case={self.case_id!r} activity={self.activity!r}>"
+
+class Policy(Base):
+    __tablename__ = "policies"
+
+    id = Column(Integer, primary_key=True)
+    policy_code = Column(String(50), nullable=True, index=True)
+    title = Column(String(255), nullable=False)
+    department = Column(String(100), nullable=True)
+    filename = Column(String(255), nullable=False, default="")
+    version = Column(String(50), nullable=True)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    upload_date = Column(DateTime(timezone=True), default=utcnow)
+
+    owner = Column(String(150), nullable=True)
+    policy_type = Column(String(100), nullable=True)
+    jurisdiction = Column(String(150), nullable=True)
+    effective_date = Column(String(30), nullable=True)
+    pages = Column(Integer, nullable=True)
+
+    status = Column(
+        String(30),
+        nullable=False,
+        default="Pending Approval",
+    )
+    supersedes = Column(
+        Integer,
+        ForeignKey("policies.id"),
+        nullable=True,
+    )
+
+    superseded_by = Column(
+        Integer,
+        ForeignKey("policies.id"),
+        nullable=True,
+    )

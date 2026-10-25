@@ -18,9 +18,9 @@ from jose import jwt
 from passlib.context import CryptContext
 
 # Our own modules
-from database import get_db
-from models import User
-from schemas import (
+from backend.database import get_db
+from backend.models import User
+from backend.schemas import (
     LoginRequest,
     RegisterRequest,
     RegisterResponse,

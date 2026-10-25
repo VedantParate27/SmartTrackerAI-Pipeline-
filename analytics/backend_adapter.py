@@ -17,6 +17,10 @@ def get_backend_db_path():
             )
         return Path(database_url.removeprefix("sqlite:///"))
 
+    local_path = Path(__file__).resolve().parent.parent / "backend" / "smarttracker.db"
+    if local_path.exists():
+        return local_path
+
     return (
         Path(__file__).resolve().parents[2]
         / "SmartTrackerAI-Pipeline-"

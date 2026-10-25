@@ -22,8 +22,21 @@ export interface Category {
   label: string
 }
 
-export const seriesColor = (slot: number) =>
-  `var(--series-${((slot - 1) % 8) + 1})`
+const DEFAULT_SERIES_COLORS = [
+  '#38bdf8', // 1: sky blue
+  '#4ade80', // 2: mint green
+  '#fbbf24', // 3: warm amber
+  '#a78bfa', // 4: lavender purple
+  '#f472b6', // 5: pink
+  '#fb923c', // 6: orange
+  '#2dd4bf', // 7: teal
+  '#818cf8', // 8: indigo
+]
+
+export const seriesColor = (slot: number) => {
+  const index = ((slot - 1) % 8) + 1
+  return `var(--series-${index}, ${DEFAULT_SERIES_COLORS[index - 1]})`
+}
 
 /** Width of an element, tracked so the SVG draws at real pixels (crisp text). */
 function useWidth<T extends HTMLElement>() {
@@ -243,6 +256,7 @@ export function GroupedBarChart({
                   {/* The hit target is the whole band, not the painted pixels. */}
                   <rect
                     className="chart-hit"
+                    fill="transparent"
                     x={PAD_LEFT + band * ci}
                     y={PAD_TOP}
                     width={band}
@@ -446,6 +460,7 @@ export function LineChart({
               : null}
             <rect
               className="chart-hit"
+              fill="transparent"
               x={PAD_LEFT - step / 2}
               y={PAD_TOP}
               width={plotW + step}

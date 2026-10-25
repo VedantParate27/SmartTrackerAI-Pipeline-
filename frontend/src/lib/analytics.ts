@@ -10,7 +10,7 @@ import reportSample from './mock/analytics-report.json'
  * Until M2/M3 expose the endpoints, the screens read M3's own sample output,
  * which is SYNTHETIC. Set VITE_PHASE2_MOCK=false to call the backend instead.
  */
-export const PHASE2_MOCK = import.meta.env.VITE_PHASE2_MOCK !== 'false'
+export const PHASE2_MOCK = import.meta.env.VITE_PHASE2_MOCK === 'true'
 
 /** Keyed by location name; a live endpoint may omit a key, so reads guard. */
 type ByLocation<T> = Record<string, T | undefined>
@@ -61,9 +61,11 @@ export interface AnalyticsReport {
 export function getLocationComparison(
   accessToken: string,
   signal?: AbortSignal,
+  locations?: string[],
 ): Promise<LocationComparison> {
   if (PHASE2_MOCK) return mockDelay(comparisonSample as LocationComparison)
-  return request<LocationComparison>('/admin/analytics/locations', {
+  const qs = locations && locations.length > 0 ? `?locations=${encodeURIComponent(locations.join(','))}` : ''
+  return request<LocationComparison>(`/admin/analytics/locations${qs}`, {
     headers: bearer(accessToken),
     signal,
   })

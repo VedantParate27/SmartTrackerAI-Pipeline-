@@ -16,11 +16,12 @@
 # analysis data. AI vocabulary is exposed verbatim (wet/dry/hazardous/
 # sanitary/e_waste/mixed/none; domestic/moderate/dump_scale/none).
 
-from typing import Any, List, Literal, Optional
+from datetime import datetime
+from typing import Any, List, Literal, Optional, Union
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
-from taxonomy import PRIORITIES, SEVERITIES, TRIAGE_MODES, WASTE_TYPES
+from backend.taxonomy import PRIORITIES, SEVERITIES, TRIAGE_MODES, WASTE_TYPES
 
 WasteType = Literal["dry", "wet", "e_waste", "medical", "hazardous", "bulk"]
 Severity = Literal["small", "medium", "large"]
@@ -467,10 +468,11 @@ class AssignCleanerResponse(BaseModel):
 
 class CleanupProofResponse(BaseModel):
     id: int
-    task_id: int
-    image_url: str
-    uploaded_by: int
-    uploaded_at: str
+    task_id: Union[int, str]
+    image_url: Optional[str] = None
+    image_path: Optional[str] = None
+    uploaded_by: Optional[int] = None
+    uploaded_at: Optional[str] = None
     verification_status: str
     verified_by: Optional[int] = None
     verified_at: Optional[str] = None
@@ -481,7 +483,7 @@ class CleanupProofResponse(BaseModel):
     @field_validator("uploaded_at", "verified_at", mode="before")
     @classmethod
     def serialise_proof_timestamps(cls, value):
-        if value is None:
+        if value is None or value == "None" or value == "":
             return None
         if hasattr(value, "isoformat"):
             return value.isoformat()
@@ -495,7 +497,7 @@ class CleanerTaskResponse(BaseModel):
     complaint_status: Optional[str] = None
     tracking_id: str
     status: str
-    assigned_at: str
+    assigned_at: Optional[str] = None
     started_at: Optional[str] = Field(
         default=None,
         description=(
@@ -518,10 +520,16 @@ class CleanerTaskResponse(BaseModel):
     complaint_text: str
     waste_type: Optional[str] = None
     quantity_severity: Optional[str] = None
+    severity: Optional[str] = None
     recommended_action: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     address_text: Optional[str] = None
+    manual_address: Optional[str] = None
+    location_type: Optional[str] = None
+    location_display: Optional[str] = None
+    image_url: Optional[str] = None
+    image_path: Optional[str] = None
     proofs: List[CleanupProofResponse] = []
 
     model_config = {"from_attributes": True}
@@ -532,7 +540,7 @@ class CleanerTaskResponse(BaseModel):
     )
     @classmethod
     def serialise_task_timestamps(cls, value):
-        if value is None:
+        if value is None or value == "None" or value == "":
             return None
         if hasattr(value, "isoformat"):
             return value.isoformat()
@@ -1213,3 +1221,60 @@ class LocationStats(BaseModel):
     # schema; open + resolved always equals complaints_reported).
     open_complaints: int
     resolved_complaints: int
+
+# ---------------------------------------------------------------------------
+# POLICY KNOWLEDGE BASE SCHEMAS
+# ---------------------------------------------------------------------------
+class PolicyIngestionReport(BaseModel):
+    chunks: int = 1
+    unreadablePages: List[int] = Field(default_factory=list, alias="unreadable_pages")
+    warnings: List[str] = Field(default_factory=list)
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+
+class PolicyCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    owner: Optional[str] = Field(default="Administrator", max_length=150)
+    department: Optional[str] = Field(default="General", max_length=100)
+    policyType: Optional[str] = Field(default="Policy", alias="policy_type")
+    policy_type: Optional[str] = None
+    jurisdiction: Optional[str] = Field(default="Organisation-wide", max_length=150)
+    version: Optional[str] = Field(default="1.0", max_length=50)
+    effectiveDate: Optional[str] = Field(default=None, alias="effective_date")
+    effective_date: Optional[str] = None
+    pages: Optional[int] = Field(default=1, ge=1)
+    fileName: Optional[str] = Field(default="", alias="filename")
+    filename: Optional[str] = None
+    supersedes: Optional[Union[str, int]] = None
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+
+    def get_policy_type(self) -> str:
+        return self.policy_type or self.policyType or "Policy"
+
+    def get_effective_date(self) -> str:
+        return self.effective_date or self.effectiveDate or datetime.now().strftime("%Y-%m-%d")
+
+    def get_filename(self) -> str:
+        return self.filename or self.fileName or ""
+
+
+class PolicyResponse(BaseModel):
+    id: str
+    title: str
+    owner: str
+    department: str
+    policyType: str = Field(..., alias="policy_type")
+    jurisdiction: str
+    version: str
+    effectiveDate: str = Field(..., alias="effective_date")
+    status: str
+    pages: int
+    lastUpdated: str = Field(..., alias="last_updated")
+    supersedes: Optional[str] = None
+    fileName: Optional[str] = Field(default="", alias="filename")
+    ingestion: PolicyIngestionReport
+
+    model_config = {"from_attributes": True, "populate_by_name": True}
+

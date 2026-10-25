@@ -1,4 +1,7 @@
-from ultralytics import YOLO
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 import os
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "best.pt")
@@ -8,6 +11,8 @@ _model = None
 def detect(image, conf: float = 0.25) -> dict:
     """image: file path or PIL image."""
     global _model
+    if YOLO is None:
+        raise RuntimeError("ultralytics_not_installed")
     if _model is None:
         _model = YOLO(MODEL_PATH)
     result = _model(image, conf=conf, verbose=False)[0]

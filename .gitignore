@@ -37,9 +37,14 @@ frontend/node_modules/
 frontend/.output/
 dist/
 
-# Archives & temporary diffs
+# Archives & temporary diffs / logs / scratch / editor
 *.zip
 *.tar.gz
 *.diff
 *.patch
-ntent .backend_diff.txt
+*.bak
+*.txt
+scratch/
+test-results.txt
+pytest_first_failures.txt
+.vscode/

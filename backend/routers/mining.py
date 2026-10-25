@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from database import get_db
-from mining import MINING_FIELDNAMES, build_mining_rows, export_mining_csv
-from routers.complaints import get_current_admin_user
+from backend.database import get_db
+from backend.mining import MINING_FIELDNAMES, build_mining_rows, export_mining_csv
+from backend.routers.complaints import get_current_admin_user
 
 router = APIRouter(prefix="/admin/mining", tags=["dwm-mining"])
 

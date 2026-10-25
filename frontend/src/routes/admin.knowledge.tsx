@@ -1,14 +1,17 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
-import { Callout, Field, SectionCard } from '#/components/ui'
+import { Callout, ErrorState, Field, LoadingState, SectionCard } from '#/components/ui'
 import { formatDate } from '#/lib/format'
 import {
-  activatePolicy,
-  ingestPolicy,
-  retirePolicy,
-  useAppState,
-} from '#/lib/store'
-import { DEPARTMENTS, can } from '#/lib/taxonomy'
+  activatePolicyDoc,
+  getAuthToken,
+  getAuthUser,
+  ingestPolicyDoc,
+  listPolicies,
+  retirePolicyDoc,
+} from '#/lib/api'
+import { useAuth } from '#/lib/auth'
+import { DEPARTMENTS } from '#/lib/taxonomy'
 import type { PolicyDocument } from '#/lib/types'
 
 export const Route = createFileRoute('/admin/knowledge')({
@@ -53,18 +56,60 @@ const EMPTY: UploadForm = {
 }
 
 function KnowledgePage() {
-  const { policies, session } = useAppState()
+  const { session } = useAuth()
+  const token =
+    (session?.role === 'admin' ? session.accessToken : null) ??
+    (getAuthUser()?.role === 'admin' ? (getAuthToken() ?? undefined) : undefined)
+
+  const [policies, setPolicies] = useState<PolicyDocument[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [search, setSearch] = useState('')
+  const [department, setDepartment] = useState('All')
+  const [status, setStatus] = useState('All')
+
   const [form, setForm] = useState<UploadForm>(EMPTY)
   const [fileName, setFileName] = useState('')
-  const [errors, setErrors] = useState<string[]>([])
+  const [formErrors, setFormErrors] = useState<string[]>([])
+  const [submitting, setSubmitting] = useState(false)
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null)
   const [report, setReport] = useState<PolicyDocument | null>(null)
 
-  // AC-09: policy management is restricted to the knowledge-manager role.
-  if (!can(session, 'policy.manage')) {
+  const loadPolicies = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!token) return
+      setLoading(true)
+      setError(null)
+      try {
+        const data = await listPolicies(
+          { search, department, status },
+          token,
+          signal,
+        )
+        setPolicies(data)
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') return
+        setError(
+          err instanceof Error ? err.message : 'Failed to load policy documents',
+        )
+      } finally {
+        setLoading(false)
+      }
+    },
+    [token, search, department, status],
+  )
+
+  useEffect(() => {
+    const controller = new AbortController()
+    loadPolicies(controller.signal)
+    return () => controller.abort()
+  }, [loadPolicies])
+
+  if (!token) {
     return (
-      <Callout tone="danger" title="Not authorised">
-        Policy ingestion and version control are limited to the knowledge
-        manager role. Switch the signed-in user above to continue.
+      <Callout tone="danger" title="Admin session required">
+        Sign in with a backend admin account to access the policy knowledge base.
       </Callout>
     )
   }
@@ -76,7 +121,7 @@ function KnowledgePage() {
     setForm((current) => ({ ...current, [key]: value }))
   }
 
-  function onSubmit(event: React.FormEvent) {
+  async function onSubmit(event: React.FormEvent) {
     event.preventDefault()
     const found: string[] = []
 
@@ -94,25 +139,65 @@ function KnowledgePage() {
     }
     if (!fileName) found.push('Attach the policy file (PDF or TXT).')
 
-    setErrors(found)
+    setFormErrors(found)
     if (found.length > 0) return
 
-    setReport(
-      ingestPolicy({
-        title: form.title.trim(),
-        owner: form.owner.trim(),
-        department: form.department,
-        policyType: form.policyType,
-        jurisdiction: form.jurisdiction.trim() || 'Organisation-wide',
-        version: form.version.trim(),
-        effectiveDate: form.effectiveDate,
-        pages,
-        fileName,
-        supersedes: form.supersedes || null,
-      }),
-    )
-    setForm(EMPTY)
-    setFileName('')
+    setSubmitting(true)
+    try {
+      const doc = await ingestPolicyDoc(
+        {
+          title: form.title.trim(),
+          owner: form.owner.trim(),
+          department: form.department,
+          policyType: form.policyType,
+          jurisdiction: form.jurisdiction.trim() || 'Organisation-wide',
+          version: form.version.trim(),
+          effectiveDate: form.effectiveDate,
+          pages,
+          fileName,
+          supersedes: form.supersedes || null,
+        },
+        token,
+      )
+      setReport(doc)
+      setForm(EMPTY)
+      setFileName('')
+      setFormErrors([])
+      await loadPolicies()
+    } catch (err: unknown) {
+      setFormErrors([
+        err instanceof Error ? err.message : 'Ingestion failed on backend',
+      ])
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleActivate(id: string) {
+    setActionInProgress(id)
+    try {
+      await activatePolicyDoc(id, token)
+      if (report && report.id === id) {
+        setReport(null)
+      }
+      await loadPolicies()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Activation failed')
+    } finally {
+      setActionInProgress(null)
+    }
+  }
+
+  async function handleRetire(id: string) {
+    setActionInProgress(id)
+    try {
+      await retirePolicyDoc(id, token)
+      await loadPolicies()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Retirement failed')
+    } finally {
+      setActionInProgress(null)
+    }
   }
 
   const activeCount = policies.filter(
@@ -171,12 +256,12 @@ function KnowledgePage() {
             <button
               type="button"
               className="btn btn-primary btn-sm"
-              onClick={() => {
-                activatePolicy(report.id)
-                setReport(null)
-              }}
+              disabled={actionInProgress === report.id}
+              onClick={() => handleActivate(report.id)}
             >
-              Approve and activate this version
+              {actionInProgress === report.id
+                ? 'Activating…'
+                : 'Approve and activate this version'}
             </button>
             <button
               type="button"
@@ -190,11 +275,11 @@ function KnowledgePage() {
       ) : null}
 
       <SectionCard title="Upload a policy document" meta="FR-24, FR-25">
-        {errors.length > 0 ? (
+        {formErrors.length > 0 ? (
           <div className="mb-4">
             <Callout tone="danger" title="Fix these fields">
               <ul className="m-0 mt-1 list-disc space-y-0.5 pl-4">
-                {errors.map((message) => (
+                {formErrors.map((message) => (
                   <li key={message}>{message}</li>
                 ))}
               </ul>
@@ -335,7 +420,7 @@ function KnowledgePage() {
               label="Policy file"
               htmlFor="p-file"
               required
-              hint="PDF or TXT. The file is not uploaded anywhere in this demo; only its name is kept."
+              hint="PDF or TXT. The file is registered and indexed for knowledge retrieval."
             >
               <input
                 id="p-file"
@@ -349,13 +434,13 @@ function KnowledgePage() {
                     return
                   }
                   if (!ACCEPTED_TYPES.includes(file.type)) {
-                    setErrors([
+                    setFormErrors([
                       'Only PDF or TXT policy documents can be ingested.',
                     ])
                     setFileName('')
                     return
                   }
-                  setErrors([])
+                  setFormErrors([])
                   setFileName(file.name)
                 }}
               />
@@ -365,9 +450,10 @@ function KnowledgePage() {
           <div className="sm:col-span-2">
             <button
               type="submit"
+              disabled={submitting}
               className="btn btn-primary btn-block sm:w-auto"
             >
-              Extract and ingest
+              {submitting ? 'Ingesting…' : 'Extract and ingest'}
             </button>
           </div>
         </form>
@@ -378,72 +464,134 @@ function KnowledgePage() {
         meta={`${policies.length} documents`}
         bodyClassName=""
       >
-        <div className="table-scroll">
-          <table className="table">
-            <thead>
-              <tr>
-                <th scope="col">Document</th>
-                <th scope="col">Department</th>
-                <th scope="col">Version</th>
-                <th scope="col">Effective</th>
-                <th scope="col">Status</th>
-                <th scope="col">Retrievable</th>
-                <th scope="col">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {policies.map((policy) => (
-                <tr key={policy.id}>
-                  <td>
-                    <span className="font-bold">{policy.title}</span>
-                    <span className="mono block subtle">{policy.id}</span>
-                    <span className="block text-xs subtle">
-                      {policy.policyType} · owner {policy.owner} ·{' '}
-                      {policy.ingestion.chunks} chunks
-                    </span>
-                  </td>
-                  <td className="text-xs">{policy.department}</td>
-                  <td className="whitespace-nowrap">v{policy.version}</td>
-                  <td className="whitespace-nowrap text-xs">
-                    {formatDate(policy.effectiveDate)}
-                  </td>
-                  <td>
-                    <span
-                      className="pill"
-                      data-tone={STATUS_TONE[policy.status]}
-                    >
-                      {policy.status}
-                    </span>
-                  </td>
-                  <td className="text-xs">
-                    {policy.status === 'Active' ? 'Yes' : 'No — audit only'}
-                  </td>
-                  <td>
-                    {policy.status === 'Pending Approval' ? (
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={() => activatePolicy(policy.id)}
-                      >
-                        Activate
-                      </button>
-                    ) : policy.status === 'Active' ? (
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={() => retirePolicy(policy.id)}
-                      >
-                        Retire
-                      </button>
-                    ) : (
-                      <span className="text-xs subtle">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="card-pad pb-0">
+          <div className="filter-row flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex flex-1 min-w-[200px] items-center gap-2">
+              <input
+                type="search"
+                placeholder="Search policies by title, ID, or owner…"
+                className="input w-full"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className="select text-xs"
+                value={department}
+                onChange={(e) => setDepartment(e.target.value)}
+              >
+                <option value="All">All departments</option>
+                {DEPARTMENTS.map((dept) => (
+                  <option key={dept} value={dept}>
+                    {dept}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="select text-xs"
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+              >
+                <option value="All">All statuses</option>
+                <option value="Active">Active</option>
+                <option value="Pending Approval">Pending Approval</option>
+                <option value="Retired">Retired</option>
+              </select>
+            </div>
+          </div>
         </div>
+
+        {error ? (
+          <div className="card-pad">
+            <ErrorState
+              title="Policy documents could not be loaded"
+              message={error}
+              onRetry={() => loadPolicies()}
+            />
+          </div>
+        ) : loading && policies.length === 0 ? (
+          <div className="card-pad">
+            <LoadingState label="Loading policy documents…" />
+          </div>
+        ) : policies.length === 0 ? (
+          <div className="card-pad text-center text-sm muted py-8">
+            No policy documents found matching your filter criteria.
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Document</th>
+                  <th scope="col">Department</th>
+                  <th scope="col">Version</th>
+                  <th scope="col">Effective</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Retrievable</th>
+                  <th scope="col">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {policies.map((policy) => (
+                  <tr key={policy.id}>
+                    <td>
+                      <span className="font-bold">{policy.title}</span>
+                      <span className="mono block subtle">{policy.id}</span>
+                      <span className="block text-xs subtle">
+                        {policy.policyType} · owner {policy.owner} ·{' '}
+                        {policy.ingestion.chunks} chunks
+                      </span>
+                    </td>
+                    <td className="text-xs">{policy.department}</td>
+                    <td className="whitespace-nowrap">v{policy.version}</td>
+                    <td className="whitespace-nowrap text-xs">
+                      {formatDate(policy.effectiveDate)}
+                    </td>
+                    <td>
+                      <span
+                        className="pill"
+                        data-tone={STATUS_TONE[policy.status]}
+                      >
+                        {policy.status}
+                      </span>
+                    </td>
+                    <td className="text-xs">
+                      {policy.status === 'Active' ? 'Yes' : 'No — audit only'}
+                    </td>
+                    <td>
+                      {policy.status === 'Pending Approval' ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={actionInProgress === policy.id}
+                          onClick={() => handleActivate(policy.id)}
+                        >
+                          {actionInProgress === policy.id
+                            ? 'Activating…'
+                            : 'Activate'}
+                        </button>
+                      ) : policy.status === 'Active' ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={actionInProgress === policy.id}
+                          onClick={() => handleRetire(policy.id)}
+                        >
+                          {actionInProgress === policy.id
+                            ? 'Retiring…'
+                            : 'Retire'}
+                        </button>
+                      ) : (
+                        <span className="text-xs subtle">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </SectionCard>
     </div>
   )

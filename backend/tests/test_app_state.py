@@ -11,9 +11,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from database import Base, get_db  # noqa: E402
-from main import app  # noqa: E402
-from models import Complaint, User  # noqa: E402
+from backend.database import Base, get_db  # noqa: E402
+from backend.main import app  # noqa: E402
+from backend.models import Complaint, User  # noqa: E402
 
 
 engine = create_engine(

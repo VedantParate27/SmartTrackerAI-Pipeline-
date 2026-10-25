@@ -24,6 +24,7 @@ import {
 } from '#/lib/analytics'
 import type { AnalyticsReport, LocationComparison } from '#/lib/analytics'
 import { signOut, useAuth } from '#/lib/auth'
+import { getAuthToken, getAuthUser } from '#/lib/api'
 import { aiSeverityLabel, aiWasteLabel } from '#/lib/complaint-format'
 import { formatDateTime } from '#/lib/format'
 import { useApi } from '#/lib/use-api'
@@ -42,7 +43,9 @@ function minutes(value: number | null | undefined) {
 
 function AnalyticsPage() {
   const { session } = useAuth()
-  const token = session?.role === 'admin' ? session.accessToken : undefined
+  const token =
+    (session?.role === 'admin' ? session.accessToken : null) ??
+    (getAuthUser()?.role === 'admin' ? (getAuthToken() ?? undefined) : undefined)
   const comparison = useApi(
     token ? (signal) => getLocationComparison(token, signal) : null,
     [token],

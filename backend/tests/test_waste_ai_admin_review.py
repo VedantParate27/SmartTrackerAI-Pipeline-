@@ -16,15 +16,18 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-import ai_client  # noqa: E402
-import waste_ai_service  # noqa: E402
+from backend import ai_client, waste_ai_service  # noqa: E402
 from test_app_state import TestingSessionLocal, client  # noqa: E402
 
-from models import (  # noqa: E402
+from backend.models import (  # noqa: E402
     AdminDecision,
+    AIOutput,
+    AICorrection,
+    CleanupProof,
     CleanupTask,
     Complaint,
     EventLog,
+    Response,
     WasteAIResult,
 )
 
@@ -37,20 +40,40 @@ JPEG_HEAD = b"\xff\xd8\xff\xe0" + b"\x00" * 16
 @pytest.fixture(autouse=True)
 def _review_isolation(monkeypatch):
     """Fresh rows per test + AI always mocked (never Gemini)."""
-    monkeypatch.setattr(ai_client, "analyze_waste_image",
-                        lambda *a, **k: {"success": False, "result": None,
-                                         "error": "NOT_MOCKED", "details": None, "latency_ms": 0})
-    monkeypatch.setattr(ai_client, "verify_cleanup",
-                        lambda *a, **k: {"success": False, "result": None,
-                                         "error": "NOT_MOCKED", "details": None, "latency_ms": 0})
+    monkeypatch.setattr(
+        ai_client,
+        "analyze_waste_image",
+        lambda *a, **k: {
+            "success": False, "result": None,
+            "error": "NOT_MOCKED", "details": None, "latency_ms": 0
+        },
+    )
+    monkeypatch.setattr(
+        ai_client,
+        "verify_cleanup",
+        lambda *a, **k: {
+            "success": False, "result": None,
+            "error": "NOT_MOCKED", "details": None, "latency_ms": 0
+        },
+    )
     monkeypatch.setattr(waste_ai_service, "SessionLocal", TestingSessionLocal)
     monkeypatch.setenv("WASTE_AI_MODE", "assist")
+
     yield
+
     with TestingSessionLocal() as db:
+        # Remove dependent records before their parent complaints.
         db.query(EventLog).delete()
         db.query(AdminDecision).delete()
-        db.query(CleanupTask).delete()
+        db.query(AICorrection).delete()
+        db.query(AIOutput).delete()
+        db.query(Response).delete()
         db.query(WasteAIResult).delete()
+
+        # Proofs reference cleanup_tasks, which reference complaints.
+        db.query(CleanupProof).delete()
+        db.query(CleanupTask).delete()
+
         db.query(Complaint).delete()
         db.commit()
 
@@ -67,7 +90,7 @@ def _register_and_login(email, password="Password123!"):
 
 
 def _promote(user_id, role):
-    from models import User
+    from backend.models import User
     with TestingSessionLocal() as db:
         db.query(User).filter(User.id == user_id).one().role = role
         db.commit()

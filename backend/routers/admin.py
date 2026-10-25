@@ -19,15 +19,15 @@
 #   GET    /admin/locations/stats/all              — DEPRECATED alias of /locations/statistics
 
 import json
-from typing import List, Optional
+from typing import List, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, update
 
 # Our own modules
-from database import get_db
-from models import (
+from backend.database import get_db
+from backend.models import (
     AdminDecision,
     Complaint,
     User,
@@ -40,8 +40,9 @@ from models import (
     AICorrection,
     Location,
     cleaner_locations,
+    Policy,
 )
-from schemas import (
+from backend.schemas import (
     AdminComplaintUpdateRequest, 
     AdminQueueItem, 
     ComplaintResponse,
@@ -67,12 +68,15 @@ from schemas import (
     LocationResponse,
     SetComplaintLocationRequest,
     LocationStats,
+    PolicyCreateRequest,
+    PolicyResponse,
+    PolicyIngestionReport,
 )
 
-from routers.complaints import get_current_user, get_current_admin_user, _latest_ai_result
-from routers.eventlog import log_event
-from task_timeline import first_proof_uploaded_at
-from taxonomy import compute_priority
+from backend.routers.complaints import get_current_user, get_current_admin_user, _latest_ai_result
+from backend.routers.eventlog import log_event
+from backend.task_timeline import first_proof_uploaded_at
+from backend.taxonomy import compute_priority
 
 # ---------------------------------------------------------------------------
 # LIFECYCLE RULES
@@ -1656,7 +1660,7 @@ def _parse_ai_errors(raw: Optional[str]) -> Optional[list]:
 
 def _proof_review_item(proof: CleanupProof) -> dict:
     """Serialize one CleanupProof for the admin review (AI errors parsed)."""
-    from schemas import CleanupProofAIFields
+    from backend.schemas import CleanupProofAIFields
 
     item = ProofReviewItem.model_validate(proof).model_dump(mode="json")
     item["ai_errors"] = _parse_ai_errors(proof.ai_errors_json)
@@ -1706,3 +1710,331 @@ def get_task_proof_review(
         "address_text": complaint.address_text,
         "proofs": [_proof_review_item(p) for p in task.proofs],
     }
+
+# ---------------------------------------------------------------------------
+# POLICY KNOWLEDGE BASE MANAGEMENT
+# ---------------------------------------------------------------------------
+
+DEFAULT_SEED_POLICIES = [
+    {
+        "code": "POL-PAY-031",
+        "title": "Payroll Deduction & Correction Policy",
+        "owner": "Finance Controller",
+        "department": "Finance & Payroll",
+        "policy_type": "Policy",
+        "jurisdiction": "Organisation-wide",
+        "version": "3.1",
+        "effective_date": "2026-01-01",
+        "status": "Active",
+        "pages": 12,
+        "supersedes_code": "POL-PAY-028",
+        "filename": "POL-PAY-031_v3.1.pdf",
+    },
+    {
+        "code": "POL-PAY-028",
+        "title": "Payroll Deduction & Correction Policy",
+        "owner": "Finance Controller",
+        "department": "Finance & Payroll",
+        "policy_type": "Policy",
+        "jurisdiction": "Organisation-wide",
+        "version": "2.8",
+        "effective_date": "2024-04-01",
+        "status": "Retired",
+        "pages": 10,
+        "supersedes_code": None,
+        "filename": "POL-PAY-028_v2.8.pdf",
+    },
+    {
+        "code": "SOP-REF-024",
+        "title": "Refund & Chargeback SOP",
+        "owner": "Billing Operations Lead",
+        "department": "Billing & Refunds",
+        "policy_type": "SOP",
+        "jurisdiction": "Organisation-wide",
+        "version": "2.4",
+        "effective_date": "2025-11-15",
+        "status": "Active",
+        "pages": 8,
+        "supersedes_code": None,
+        "filename": "SOP-REF-024_v2.4.pdf",
+    },
+    {
+        "code": "SOP-REF-025",
+        "title": "Refund & Chargeback SOP",
+        "owner": "Billing Operations Lead",
+        "department": "Billing & Refunds",
+        "policy_type": "SOP",
+        "jurisdiction": "Organisation-wide",
+        "version": "2.5",
+        "effective_date": "2026-02-15",
+        "status": "Pending Approval",
+        "pages": 9,
+        "supersedes_code": "SOP-REF-024",
+        "filename": "SOP-REF-025_v2.5.pdf",
+    },
+    {
+        "code": "CIR-LOG-012",
+        "title": "Logistics & Delivery Standards Circular",
+        "owner": "Logistics Director",
+        "department": "Logistics & Transport",
+        "policy_type": "Circular",
+        "jurisdiction": "Organisation-wide",
+        "version": "1.2",
+        "effective_date": "2025-10-01",
+        "status": "Active",
+        "pages": 6,
+        "supersedes_code": None,
+        "filename": "CIR-LOG-012_v1.2.pdf",
+    },
+    {
+        "code": "POL-SEC-015",
+        "title": "Waste Disposal & Sanitation Security Policy",
+        "owner": "Operations Head",
+        "department": "Sanitation & Waste",
+        "policy_type": "Policy",
+        "jurisdiction": "Organisation-wide",
+        "version": "1.0",
+        "effective_date": "2026-02-01",
+        "status": "Active",
+        "pages": 15,
+        "supersedes_code": None,
+        "filename": "POL-SEC-015_v1.0.pdf",
+    },
+]
+
+
+def _seed_policies_if_empty(db: Session, admin_id: int):
+    """Seed standard starter policies if the policies table has no records."""
+    count = db.query(Policy).count()
+    if count > 0:
+        return
+
+    created = {}
+    for item in DEFAULT_SEED_POLICIES:
+        pol = Policy(
+            policy_code=item["code"],
+            title=item["title"],
+            owner=item["owner"],
+            department=item["department"],
+            policy_type=item["policy_type"],
+            jurisdiction=item["jurisdiction"],
+            version=item["version"],
+            effective_date=item["effective_date"],
+            status=item["status"],
+            pages=item["pages"],
+            filename=item["filename"],
+            uploaded_by=admin_id,
+        )
+        db.add(pol)
+        created[item["code"]] = pol
+
+    db.commit()
+
+    # Second pass: link supersedes relationship
+    for item in DEFAULT_SEED_POLICIES:
+        sup_code = item.get("supersedes_code")
+        if sup_code and sup_code in created:
+            current_pol = created[item["code"]]
+            old_pol = created[sup_code]
+            current_pol.supersedes = old_pol.id
+            old_pol.superseded_by = current_pol.id
+
+    db.commit()
+
+
+def _serialize_policy(policy: Policy, db: Session = None) -> dict:
+    supersedes_ref = None
+    if policy.supersedes:
+        if db:
+            s_pol = db.query(Policy).filter(Policy.id == policy.supersedes).first()
+            if s_pol:
+                supersedes_ref = s_pol.policy_code or str(s_pol.id)
+        if not supersedes_ref:
+            supersedes_ref = str(policy.supersedes)
+
+    eff = policy.effective_date
+    if not eff:
+        eff = policy.upload_date.strftime("%Y-%m-%d") if policy.upload_date else "2026-01-01"
+
+    last_updated = policy.upload_date.strftime("%Y-%m-%d") if policy.upload_date else "2026-01-01"
+
+    return {
+        "id": policy.policy_code or str(policy.id),
+        "title": policy.title,
+        "owner": policy.owner or "Administrator",
+        "department": policy.department or "General",
+        "policyType": policy.policy_type or "Policy",
+        "jurisdiction": policy.jurisdiction or "Organisation-wide",
+        "version": policy.version or "1.0",
+        "effectiveDate": eff,
+        "status": policy.status or "Pending Approval",
+        "pages": policy.pages or 1,
+        "lastUpdated": last_updated,
+        "supersedes": supersedes_ref,
+        "fileName": policy.filename or "",
+        "ingestion": {
+            "chunks": max(1, (policy.pages or 1) * 3),
+            "unreadablePages": [],
+            "warnings": [],
+        },
+    }
+
+
+def _find_policy_or_404(db: Session, policy_id_raw: Union[str, int]) -> Policy:
+    cleaned = str(policy_id_raw).strip()
+    policy = None
+    if cleaned.isdigit():
+        policy = db.query(Policy).filter(Policy.id == int(cleaned)).first()
+    if not policy:
+        policy = db.query(Policy).filter(Policy.policy_code == cleaned).first()
+    if not policy and "-" in cleaned:
+        last_part = cleaned.split("-")[-1]
+        if last_part.isdigit():
+            policy = db.query(Policy).filter(Policy.id == int(last_part)).first()
+
+    if not policy:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Policy with ID '{policy_id_raw}' not found.",
+        )
+    return policy
+
+
+@router.get("/policies", response_model=List[PolicyResponse])
+def list_policies(
+    department: Optional[str] = Query(default=None),
+    search: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Admin-only: list all policies with optional department, search, and status filtering."""
+    _seed_policies_if_empty(db, current_user.id)
+
+    query = db.query(Policy)
+
+    if isinstance(department, str) and department.strip() and department != "All":
+        query = query.filter(Policy.department == department.strip())
+
+    if status and status.strip() and status != "All":
+        query = query.filter(Policy.status == status.strip())
+
+    if search and search.strip():
+        term = f"%{search.strip().lower()}%"
+        query = query.filter(
+            func.lower(Policy.title).like(term) |
+            func.lower(Policy.owner).like(term) |
+            func.lower(func.coalesce(Policy.policy_code, "")).like(term) |
+            func.lower(Policy.department).like(term)
+        )
+
+    policies = query.order_by(Policy.id.desc()).all()
+    return [_serialize_policy(p, db) for p in policies]
+
+
+@router.post("/policies", response_model=PolicyResponse, status_code=status.HTTP_201_CREATED)
+def create_policy(
+    payload: PolicyCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Admin-only: create a new policy with status 'Pending Approval'."""
+    superseded_id = None
+    if payload.supersedes:
+        # Validate that the referenced policy exists
+        try:
+            old_p = _find_policy_or_404(db, payload.supersedes)
+            superseded_id = old_p.id
+        except HTTPException:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Referenced superseded policy '{payload.supersedes}' does not exist.",
+            )
+
+    try:
+        new_policy = Policy(
+            title=payload.title.strip(),
+            owner=payload.owner.strip() if payload.owner else "Administrator",
+            department=payload.department.strip() if payload.department else "General",
+            policy_type=payload.get_policy_type(),
+            jurisdiction=payload.jurisdiction.strip() if payload.jurisdiction else "Organisation-wide",
+            version=payload.version.strip() if payload.version else "1.0",
+            effective_date=payload.get_effective_date(),
+            pages=payload.pages or 1,
+            filename=payload.get_filename(),
+            status="Pending Approval",
+            supersedes=superseded_id,
+            uploaded_by=current_user.id,
+        )
+        db.add(new_policy)
+        db.commit()
+        db.refresh(new_policy)
+
+        # Assign policy code
+        new_policy.policy_code = f"DOC-{new_policy.id:03d}"
+        db.commit()
+        db.refresh(new_policy)
+
+        return _serialize_policy(new_policy, db)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create policy: {exc}",
+        )
+
+
+@router.post("/policies/{policy_id}/activate", response_model=PolicyResponse)
+def activate_policy(
+    policy_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Admin-only: activate the specified policy. If it supersedes an older policy, retire the older one."""
+    policy = _find_policy_or_404(db, policy_id)
+
+    try:
+        policy.status = "Active"
+        policy.upload_date = utcnow()
+
+        if policy.supersedes:
+            old_policy = db.query(Policy).filter(Policy.id == policy.supersedes).first()
+            if old_policy:
+                old_policy.status = "Retired"
+                old_policy.superseded_by = policy.id
+                old_policy.upload_date = utcnow()
+
+        db.commit()
+        db.refresh(policy)
+        return _serialize_policy(policy, db)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to activate policy: {exc}",
+        )
+
+
+@router.post("/policies/{policy_id}/retire", response_model=PolicyResponse)
+def retire_policy(
+    policy_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Admin-only: retire the specified policy."""
+    policy = _find_policy_or_404(db, policy_id)
+
+    try:
+        policy.status = "Retired"
+        policy.upload_date = utcnow()
+
+        db.commit()
+        db.refresh(policy)
+        return _serialize_policy(policy, db)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retire policy: {exc}",
+        )
+

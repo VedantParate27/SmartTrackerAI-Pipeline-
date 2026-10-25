@@ -24,7 +24,7 @@ import random
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from database import Base, SessionLocal, engine
+from backend.database import Base, SessionLocal, engine
 
 # Support dependency-injection overrides (e.g. the in-memory test engine in
 # tests/test_app_state.py). When SessionLocal/engine are overridden there, the
@@ -36,7 +36,7 @@ except Exception:  # normal CLI/runtime operation
     _InjectedSession = None
     _InjectedEngine = None
 
-from models import (
+from backend.models import (
     AICorrection,
     AIOutput,
     CleanupProof,
@@ -45,8 +45,8 @@ from models import (
     EventLog,
     User,
 )
-from routers.eventlog import log_event
-from taxonomy import compute_priority
+from backend.routers.eventlog import log_event
+from backend.taxonomy import compute_priority
 
 # ---------------------------------------------------------------------------
 # Realistic content pools (slot-based, varied, non-nonsensical)
