@@ -14,3 +14,4 @@ ai/models/*.pt
 
 # Runtime-generated upload files
 backend/uploads/
+ai/data/dwm_images/

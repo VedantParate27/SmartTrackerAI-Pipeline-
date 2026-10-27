@@ -1,0 +1,16 @@
+Test images: 764
+DWM outcome counts:
+dwm_outcome
+ok                524
+predicted_none    123
+no_detections     117
+
+DWM-only   answered  84.7%   waste_type acc  63.4%   severity acc  58.9%   both correct  54.1%
+LLM-only / hybrid: not scored, 764 images have no Gemini result (run without --dwm-only and a GOOGLE_API_KEY).
+
+DWM answers that would pass each threshold (both confidences >= t):
+  t=0.5:  42.5% of images (325), wrong among those  18.8%
+  t=0.6:  29.6% of images (226), wrong among those  13.7%
+  t=0.7:  19.1% of images (146), wrong among those  10.3%
+  t=0.8:  11.5% of images (88), wrong among those   8.0%
+  t=0.9:   4.1% of images (31), wrong among those   6.5%

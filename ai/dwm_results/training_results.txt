@@ -1,0 +1,327 @@
+Feature table: 3056 rows, 41 features
+Split: 2292 train / 764 test images
+Dropped (total_detections == 0): 319 train, 117 test
+
+======================================================================
+TARGET: waste_type  (train 1973, test 647)
+Train class counts:
+label_waste_type
+dry          1181
+none          326
+mixed         146
+wet           115
+hazardous     102
+e_waste        94
+sanitary        9
+Test class counts:
+label_waste_type
+dry          383
+none         107
+mixed         49
+wet           39
+hazardous     35
+e_waste       31
+sanitary       3
+
+--- decision_tree  best params {'max_depth': None, 'min_samples_leaf': 3}
+  CV macro-F1 (train): 0.458
+  Test accuracy: 0.609   Test macro-F1: 0.424
+              precision    recall  f1-score   support
+
+         dry       0.87      0.70      0.77       383
+     e_waste       0.22      0.29      0.25        31
+   hazardous       0.50      0.63      0.56        35
+       mixed       0.24      0.43      0.30        49
+        none       0.44      0.48      0.46       107
+    sanitary       0.00      0.00      0.00         3
+         wet       0.63      0.62      0.62        39
+
+    accuracy                           0.61       647
+   macro avg       0.41      0.45      0.42       647
+weighted avg       0.68      0.61      0.64       647
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 99.5% (644), wrong among confident 38.8%
+    conf>=0.6: coverage 95.1% (615), wrong among confident 37.6%
+    conf>=0.7: coverage 90.0% (582), wrong among confident 34.9%
+    conf>=0.8: coverage 85.8% (555), wrong among confident 32.6%
+    conf>=0.9: coverage 77.4% (501), wrong among confident 27.1%
+
+--- random_forest  best params {'max_depth': 10, 'min_samples_leaf': 1}
+  CV macro-F1 (train): 0.564
+  Test accuracy: 0.748   Test macro-F1: 0.549
+              precision    recall  f1-score   support
+
+         dry       0.83      0.88      0.85       383
+     e_waste       0.52      0.35      0.42        31
+   hazardous       0.82      0.80      0.81        35
+       mixed       0.42      0.43      0.42        49
+        none       0.58      0.53      0.56       107
+    sanitary       0.00      0.00      0.00         3
+         wet       0.76      0.79      0.78        39
+
+    accuracy                           0.75       647
+   macro avg       0.56      0.54      0.55       647
+weighted avg       0.74      0.75      0.74       647
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 64.3% (416), wrong among confident 9.1%
+    conf>=0.6: coverage 49.8% (322), wrong among confident 7.1%
+    conf>=0.7: coverage 36.0% (233), wrong among confident 3.4%
+    conf>=0.8: coverage 22.9% (148), wrong among confident 0.7%
+    conf>=0.9: coverage 11.3% (73), wrong among confident 0.0%
+
+--- knn  best params {'kneighborsclassifier__n_neighbors': 3, 'kneighborsclassifier__weights': 'distance'}
+  CV macro-F1 (train): 0.463
+  Test accuracy: 0.717   Test macro-F1: 0.475
+              precision    recall  f1-score   support
+
+         dry       0.81      0.89      0.84       383
+     e_waste       0.15      0.13      0.14        31
+   hazardous       0.68      0.74      0.71        35
+       mixed       0.37      0.31      0.33        49
+        none       0.62      0.46      0.53       107
+    sanitary       0.00      0.00      0.00         3
+         wet       0.77      0.77      0.77        39
+
+    accuracy                           0.72       647
+   macro avg       0.48      0.47      0.47       647
+weighted avg       0.70      0.72      0.70       647
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 90.0% (582), wrong among confident 24.1%
+    conf>=0.6: coverage 88.4% (572), wrong among confident 23.6%
+    conf>=0.7: coverage 62.8% (406), wrong among confident 15.8%
+    conf>=0.8: coverage 55.2% (357), wrong among confident 13.2%
+    conf>=0.9: coverage 55.0% (356), wrong among confident 13.2%
+
+--- naive_bayes  best params {'var_smoothing': np.float64(0.001)}
+  CV macro-F1 (train): 0.375
+  Test accuracy: 0.479   Test macro-F1: 0.367
+              precision    recall  f1-score   support
+
+         dry       0.88      0.55      0.68       383
+     e_waste       0.19      0.45      0.26        31
+   hazardous       0.42      0.86      0.57        35
+       mixed       0.00      0.00      0.00        49
+        none       0.62      0.20      0.30       107
+    sanitary       0.02      1.00      0.03         3
+         wet       0.67      0.79      0.73        39
+
+    accuracy                           0.48       647
+   macro avg       0.40      0.55      0.37       647
+weighted avg       0.70      0.48      0.54       647
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 97.5% (631), wrong among confident 51.3%
+    conf>=0.6: coverage 90.3% (584), wrong among confident 49.8%
+    conf>=0.7: coverage 85.2% (551), wrong among confident 49.5%
+    conf>=0.8: coverage 76.7% (496), wrong among confident 47.8%
+    conf>=0.9: coverage 66.3% (429), wrong among confident 47.1%
+
+>>> Exported random_forest as waste_type_model.joblib (best CV macro-F1 0.564)
+
+======================================================================
+TARGET: severity  (train 1973, test 647)
+Train class counts:
+label_severity
+domestic      1135
+moderate       417
+none           326
+dump_scale      95
+Test class counts:
+label_severity
+domestic      364
+moderate      141
+none          107
+dump_scale     35
+
+--- decision_tree  best params {'max_depth': 10, 'min_samples_leaf': 1}
+  CV macro-F1 (train): 0.471
+  Test accuracy: 0.594   Test macro-F1: 0.499
+              precision    recall  f1-score   support
+
+    domestic       0.77      0.70      0.74       364
+  dump_scale       0.31      0.49      0.38        35
+    moderate       0.40      0.45      0.42       141
+        none       0.46      0.45      0.45       107
+
+    accuracy                           0.59       647
+   macro avg       0.49      0.52      0.50       647
+weighted avg       0.62      0.59      0.60       647
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 98.8% (639), wrong among confident 40.2%
+    conf>=0.6: coverage 84.5% (547), wrong among confident 41.1%
+    conf>=0.7: coverage 75.1% (486), wrong among confident 40.5%
+    conf>=0.8: coverage 74.2% (480), wrong among confident 40.2%
+    conf>=0.9: coverage 58.4% (378), wrong among confident 38.4%
+
+--- random_forest  best params {'max_depth': None, 'min_samples_leaf': 3}
+  CV macro-F1 (train): 0.573
+  Test accuracy: 0.702   Test macro-F1: 0.613
+              precision    recall  f1-score   support
+
+    domestic       0.80      0.82      0.81       364
+  dump_scale       0.50      0.51      0.51        35
+    moderate       0.59      0.52      0.56       141
+        none       0.57      0.59      0.58       107
+
+    accuracy                           0.70       647
+   macro avg       0.61      0.61      0.61       647
+weighted avg       0.70      0.70      0.70       647
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 66.0% (427), wrong among confident 18.3%
+    conf>=0.6: coverage 45.1% (292), wrong among confident 12.7%
+    conf>=0.7: coverage 29.2% (189), wrong among confident 8.5%
+    conf>=0.8: coverage 17.2% (111), wrong among confident 7.2%
+    conf>=0.9: coverage 5.7% (37), wrong among confident 8.1%
+
+--- knn  best params {'kneighborsclassifier__n_neighbors': 5, 'kneighborsclassifier__weights': 'distance'}
+  CV macro-F1 (train): 0.499
+  Test accuracy: 0.634   Test macro-F1: 0.497
+              precision    recall  f1-score   support
+
+    domestic       0.72      0.82      0.76       364
+  dump_scale       0.35      0.26      0.30        35
+    moderate       0.45      0.39      0.42       141
+        none       0.58      0.46      0.51       107
+
+    accuracy                           0.63       647
+   macro avg       0.52      0.48      0.50       647
+weighted avg       0.62      0.63      0.62       647
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 86.1% (557), wrong among confident 33.6%
+    conf>=0.6: coverage 72.3% (468), wrong among confident 30.1%
+    conf>=0.7: coverage 52.9% (342), wrong among confident 20.8%
+    conf>=0.8: coverage 42.2% (273), wrong among confident 16.8%
+    conf>=0.9: coverage 27.4% (177), wrong among confident 13.0%
+
+--- naive_bayes  best params {'var_smoothing': np.float64(0.001)}
+  CV macro-F1 (train): 0.394
+  Test accuracy: 0.488   Test macro-F1: 0.421
+              precision    recall  f1-score   support
+
+    domestic       0.88      0.41      0.56       364
+  dump_scale       0.16      0.20      0.17        35
+    moderate       0.48      0.55      0.52       141
+        none       0.30      0.77      0.43       107
+
+    accuracy                           0.49       647
+   macro avg       0.46      0.48      0.42       647
+weighted avg       0.66      0.49      0.51       647
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 94.6% (612), wrong among confident 50.5%
+    conf>=0.6: coverage 87.0% (563), wrong among confident 49.0%
+    conf>=0.7: coverage 77.1% (499), wrong among confident 47.7%
+    conf>=0.8: coverage 67.2% (435), wrong among confident 48.3%
+    conf>=0.9: coverage 57.3% (371), wrong among confident 47.7%
+
+>>> Exported random_forest as severity_model.joblib (best CV macro-F1 0.573)
+
+======================================================================
+TARGET: environment  (train 1271, test 420)
+Train class counts:
+label_environment
+open_ground    1197
+bin              50
+landfill         24
+Test class counts:
+label_environment
+open_ground    386
+bin             23
+landfill        11
+
+--- decision_tree  best params {'max_depth': 8, 'min_samples_leaf': 1}
+  CV macro-F1 (train): 0.440
+  Test accuracy: 0.924   Test macro-F1: 0.626
+              precision    recall  f1-score   support
+
+         bin       0.58      0.61      0.60        23
+    landfill       0.29      0.36      0.32        11
+ open_ground       0.97      0.96      0.96       386
+
+    accuracy                           0.92       420
+   macro avg       0.61      0.64      0.63       420
+weighted avg       0.93      0.92      0.93       420
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 100.0% (420), wrong among confident 7.6%
+    conf>=0.6: coverage 100.0% (420), wrong among confident 7.6%
+    conf>=0.7: coverage 100.0% (420), wrong among confident 7.6%
+    conf>=0.8: coverage 100.0% (420), wrong among confident 7.6%
+    conf>=0.9: coverage 99.0% (416), wrong among confident 7.5%
+
+--- random_forest  best params {'max_depth': 10, 'min_samples_leaf': 3}
+  CV macro-F1 (train): 0.427
+  Test accuracy: 0.943   Test macro-F1: 0.611
+              precision    recall  f1-score   support
+
+         bin       0.85      0.48      0.61        23
+    landfill       0.40      0.18      0.25        11
+ open_ground       0.95      0.99      0.97       386
+
+    accuracy                           0.94       420
+   macro avg       0.73      0.55      0.61       420
+weighted avg       0.93      0.94      0.93       420
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 95.0% (399), wrong among confident 3.8%
+    conf>=0.6: coverage 91.0% (382), wrong among confident 2.9%
+    conf>=0.7: coverage 86.2% (362), wrong among confident 1.7%
+    conf>=0.8: coverage 82.6% (347), wrong among confident 1.2%
+    conf>=0.9: coverage 72.4% (304), wrong among confident 0.3%
+
+--- knn  best params {'kneighborsclassifier__n_neighbors': 3, 'kneighborsclassifier__weights': 'distance'}
+  CV macro-F1 (train): 0.468
+  Test accuracy: 0.921   Test macro-F1: 0.516
+              precision    recall  f1-score   support
+
+         bin       0.60      0.26      0.36        23
+    landfill       0.29      0.18      0.22        11
+ open_ground       0.94      0.98      0.96       386
+
+    accuracy                           0.92       420
+   macro avg       0.61      0.47      0.52       420
+weighted avg       0.90      0.92      0.91       420
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 99.5% (418), wrong among confident 7.4%
+    conf>=0.6: coverage 97.6% (410), wrong among confident 7.1%
+    conf>=0.7: coverage 85.7% (360), wrong among confident 3.3%
+    conf>=0.8: coverage 82.6% (347), wrong among confident 3.5%
+    conf>=0.9: coverage 82.6% (347), wrong among confident 3.5%
+
+--- naive_bayes  best params {'var_smoothing': np.float64(0.001)}
+  CV macro-F1 (train): 0.442
+  Test accuracy: 0.836   Test macro-F1: 0.484
+              precision    recall  f1-score   support
+
+         bin       0.33      0.35      0.34        23
+    landfill       0.11      0.55      0.18        11
+ open_ground       0.99      0.87      0.93       386
+
+    accuracy                           0.84       420
+   macro avg       0.48      0.59      0.48       420
+weighted avg       0.93      0.84      0.87       420
+
+  Confidently wrong (test):
+    conf>=0.5: coverage 99.8% (419), wrong among confident 16.2%
+    conf>=0.6: coverage 98.3% (413), wrong among confident 15.0%
+    conf>=0.7: coverage 96.4% (405), wrong among confident 14.6%
+    conf>=0.8: coverage 93.6% (393), wrong among confident 12.7%
+    conf>=0.9: coverage 91.0% (382), wrong among confident 12.0%
+
+>>> Exported knn as environment_model.joblib (best CV macro-F1 0.468)
+
+======================================================================
+HYBRID ACCEPTANCE SWEEP (test rows with detections: 647)
+  threshold 0.4: DWM answers 68.0% (440); on those: waste_type acc 87.5%, severity acc 77.7%, both correct 73.6%
+  threshold 0.5: DWM answers 50.2% (325); on those: waste_type acc 92.9%, severity acc 84.0%, both correct 81.2%
+  threshold 0.6: DWM answers 34.9% (226); on those: waste_type acc 95.1%, severity acc 87.6%, both correct 86.3%
+  threshold 0.7: DWM answers 22.6% (146); on those: waste_type acc 97.3%, severity acc 90.4%, both correct 89.7%
+  threshold 0.8: DWM answers 13.6% (88); on those: waste_type acc 100.0%, severity acc 92.0%, both correct 92.0%
+  threshold 0.9: DWM answers 4.8% (31); on those: waste_type acc 100.0%, severity acc 93.5%, both correct 93.5%
